@@ -1,97 +1,96 @@
 # Platform integration roadmap
 
-This document records the current product and architecture decisions for MacDjView. It is intentionally higher level than `architecture.md`, which documents the DjVu decoder itself.
+This document tracks product/platform work for the independent MacDjView downstream. Decoder internals are documented in [`architecture.md`](./architecture.md); project stance is in [`product-direction.md`](./product-direction.md).
 
 ## Supported platforms
 
 - macOS 14+ on Apple Silicon (`arm64` only).
 - iOS/iPadOS 17+.
-- CI should use the current Xcode / SDK (currently Xcode 27 / iOS 27 SDK) without raising deployment targets unless the source actually requires newer APIs.
+- CI should use the current Xcode/SDK without raising deployment targets unless the source actually requires newer APIs.
 - Prefer native Apple frameworks and standard SwiftUI/AppKit integration before custom platform code.
+
+## Current implementation status
+
+Completed:
+
+- DjVu UTI declaration: `org.djvu.djvu`, `.djvu` / `.djv`, `image/vnd.djvu`.
+- Bounded `TXTa` / `TXTz` decoding using the existing BZZ decoder.
+- UTF-8 byte ranges and DjVu text-zone coordinates.
+- Bounded document-wide embedded-text search.
+- Native SwiftUI `.searchable` UI.
+- macOS `Command-F`, `Command-G`, and `Shift-Command-G` find commands.
+- Search-result navigation and text-zone highlighting in paged, continuous, and two-page layouts.
+
+Next major work:
+
+1. Vision OCR fallback for pages without embedded text.
+2. Modern macOS toolbar/search presentation with macOS 14 fallback.
+3. macOS Spotlight content importer.
+4. Quick Look preview and Finder thumbnails.
+5. Instruments-driven rendering/zoom optimization.
 
 ## DjVu type declaration
 
-The app currently references `org.djvu.djvu` in `CFBundleDocumentTypes`, but system integrations need the type to be explicitly declared.
+The generated macOS `Info.plist` already imports `org.djvu.djvu` with:
 
-Before adding Spotlight or Quick Look support, add a `UTImportedTypeDeclarations` entry for:
+- conforms to: `public.data`;
+- filename extensions: `djvu`, `djv`;
+- MIME type: `image/vnd.djvu`.
 
-- UTI: `org.djvu.djvu`
-- conforms to: `public.data`
-- filename extensions: `djvu`, `djv`
-- MIME type: `image/vnd.djvu` (IANA-registered)
-
-The declaration should live in the generated app `Info.plist` so Launch Services, Spotlight and Quick Look agree on the same type.
+The app also exposes `UTType.djvu` in Swift. Future Spotlight/Quick Look components should use the same identifier so Launch Services and extensions agree on the file type.
 
 ## Text extraction and in-app search
 
-### Embedded DjVu text first
+### Embedded text — implemented
 
-DjVu can contain searchable text in `TXTa` (plain) and `TXTz` (BZZ-compressed) chunks. MacDjView already has a BZZ decoder, so the preferred search path is to add a bounded parser for these chunks rather than running OCR on every page.
+DjVu text is decoded from `TXTa` and BZZ-compressed `TXTz` chunks. The parser is bounded by dedicated text-size, zone-count, and zone-depth limits and preserves the original UTF-8 byte ranges plus zone coordinates.
 
-The text parser should preserve page association and DjVu text-zone coordinates where available. This enables:
+Search currently:
 
-- `Command-F` / native search field;
-- fast document-wide search;
-- next/previous match navigation;
-- page-level results;
-- match highlighting on the rendered page.
+- runs over embedded DjVu text only;
+- is case/diacritic insensitive through Foundation string search behavior chosen by the search engine;
+- is debounced and cancellable from the view model;
+- caps result count;
+- navigates to the matching page;
+- highlights the selected result using text-zone rectangles.
 
-A representative 192-page DjVu examined during development contained `TXTz` on 190 pages, so embedded text is expected to cover most search work for many real documents.
+A representative 192-page DjVu examined during development contained `TXTz` on 190 pages, so embedded text is expected to cover most searches for many real documents.
 
-### Vision OCR fallback
+### Vision OCR fallback — next
 
-For pages without embedded text, use Apple's Vision text-recognition APIs as an optional fallback.
+For pages without embedded text, add Apple's Vision text-recognition APIs as an optional fallback.
 
-- Query `supportedRecognitionLanguages` at runtime instead of assuming a fixed list.
-- Prefer `ru-RU` and `en-US` when supported for Russian/English documents.
-- Use accurate recognition for explicit document search / OCR work.
-- OCR should be lazy, cancellable and cached; do not OCR an entire large document just because it was opened.
-- Keep OCR outside the decoder core so DjVu parsing remains deterministic and testable.
+Requirements:
 
-Vision OCR is an app feature, not a prerequisite for basic DjVu support.
+- query supported recognition languages at runtime;
+- prefer `ru-RU` and `en-US` when supported;
+- use accurate recognition for explicit document-search/OCR work;
+- OCR lazily and cancellably rather than scanning a whole document on open;
+- cache page OCR results within an appropriate lifetime/budget;
+- map recognized bounding boxes into the same page-coordinate model used by search highlighting;
+- keep OCR outside the deterministic DjVu decoder core.
+
+Embedded DjVu text remains authoritative when present; OCR should fill missing pages rather than replace good `TXTa` / `TXTz` data.
 
 ## macOS Spotlight content indexing
 
-### Supported macOS integration: Spotlight importer plug-in
+### Supported macOS path
 
 For system-wide macOS search of arbitrary `.djvu` files, use a Spotlight metadata importer (`.mdimporter`) bundled inside:
 
 `MacDjView.app/Contents/Library/Spotlight/`
 
-This remains Apple's documented integration for custom file formats on macOS. The current `CSImportExtension` documentation explicitly states that Spotlight File Import extensions do not provide this functionality on macOS and directs Mac developers to a Spotlight importer plug-in instead.
+Current Apple documentation for `CSImportExtension` explicitly states that the custom-file import functionality is not provided on macOS and directs Mac developers to a Spotlight importer plug-in. Reevaluate only if Apple changes that support status in a future SDK.
 
-The importer should claim `org.djvu.djvu`, parse the document with strict resource limits, and populate standard Spotlight metadata, especially:
+The importer should claim `org.djvu.djvu` and expose standard Spotlight metadata, especially:
 
 - `kMDItemTextContent` — combined embedded `TXTa` / `TXTz` text;
 - `kMDItemNumberOfPages` — page count;
-- `kMDItemTitle` when a reliable document title exists;
-- standard language / author / subject keys only when corresponding DjVu metadata is actually available.
+- title/author/subject only when reliable DjVu metadata actually exists.
 
-`kMDItemTextContent` is intended for the text representation supplied by a Spotlight importer. Spotlight can search it even though applications cannot read that attribute back directly.
+Do not run Vision OCR automatically inside Spotlight workers. The importer should extract embedded text/metadata only, with stricter work budgets than the viewer and no network access.
 
-### Core Spotlight and CSImportExtension
-
-Use modern Core Spotlight APIs where they are actually supported and appropriate, but do not substitute them for the macOS file-format importer:
-
-- `CSImportExtension` is the modern Spotlight File Import extension API, but Apple's current documentation explicitly says it does not provide the custom-file importing functionality on macOS.
-- `CSSearchableIndex` remains useful for app-owned or app-generated searchable entities.
-- Core Spotlight may be considered later for OCR results or other app-owned data associated with documents the user explicitly opened.
-- A sandboxed viewer must not crawl the user's disk to build a parallel index of arbitrary DjVu files.
-
-If Apple changes the macOS support status of `CSImportExtension` in a future SDK, reevaluate this decision against the then-current documentation and a real-device/macOS test before migrating.
-
-### Importer performance and security rules
-
-The importer runs automatically under Spotlight workers, so it must be much cheaper than the full viewer:
-
-- extract metadata and embedded text only;
-- do not render pages;
-- do not run Vision OCR automatically in the importer;
-- enforce the same file/chunk/text limits as the decoder, plus importer-specific text-size/work budgets;
-- return partial safe metadata rather than doing expensive recovery work;
-- never use network access.
-
-Testing should include:
+Validation should include:
 
 ```bash
 mdimport -L
@@ -100,72 +99,55 @@ mdls sample.djvu
 mdfind "a known phrase from the DjVu"
 ```
 
-When the importer changes, reimport the claimed UTI/importer and verify that the expected file is found by normal Finder/Spotlight search.
-
-References:
-
-- https://developer.apple.com/documentation/corespotlight/csimportextension
-- https://developer.apple.com/library/archive/documentation/Carbon/Conceptual/MDImporters/Concepts/WritingAnImp.html
-- https://developer.apple.com/library/archive/documentation/Carbon/Conceptual/MDImporters/Concepts/AssigningDataToAttrs.html
-- `man mdimport`
-- IANA media types: https://www.iana.org/assignments/media-types/media-types.xhtml
-
 ## Quick Look and Finder thumbnails
 
-Add native system extensions for DjVu:
+Add native system extensions for `org.djvu.djvu`:
 
-1. Quick Look preview: show a lightweight document preview when the user presses Space in Finder.
-2. Thumbnail provider: render a small first-page thumbnail for Finder.
+- Quick Look preview for Space/Finder preview.
+- Thumbnail provider for Finder thumbnails.
 
-Both should reuse the safe decoder with extension-specific limits. They should decode only what is needed for the requested preview and must not index/OCR the full document.
-
-These integrations depend on the correct DjVu UTI declaration above.
+Both should reuse the bounded decoder with extension-specific limits and decode only what is necessary. First-page rendering is the default strategy; neither extension should OCR/index the whole document.
 
 ## macOS 27 UI
 
-Modernize the macOS toolbar using standard SwiftUI toolbar controls rather than custom glass chrome.
+Modernize the macOS toolbar using standard SwiftUI toolbar behavior rather than hand-built glass chrome.
 
-Desired structure on current macOS:
+Target structure:
 
-- previous / next page as one leading system group;
-- page indicator as a quiet standalone item;
-- compact view-mode menu instead of two wide segmented pickers;
-- zoom controls grouped together;
-- fit-to-height and color theme as distinct actions;
-- native `searchable` / search toolbar behavior for document text search;
-- `ToolbarSpacer` to define logical groups on modern macOS;
-- let the system provide Liquid Glass rather than applying custom blur/backgrounds to standard toolbar items.
+- previous/next grouped as navigation controls;
+- quiet page indicator;
+- compact view-mode menu instead of wide segmented pickers;
+- grouped zoom controls;
+- distinct fit-to-height and color-theme actions;
+- native search presentation;
+- `ToolbarSpacer` on newer macOS where available;
+- system-provided Liquid Glass rather than custom blur/backgrounds for normal toolbar controls.
 
-Keep version-specific toolbar APIs behind `#available` and retain a sensible macOS 14 fallback.
+Keep newer toolbar APIs behind availability checks and retain a sensible macOS 14 fallback.
 
 ## Rendering and GPU strategy
 
-Do not introduce raw Metal merely because it is available.
+Do not introduce raw Metal simply because Apple Silicon supports it.
 
-Current priorities:
+Priority order:
 
-1. Avoid unnecessary full-page rerenders for every interactive zoom change.
-2. Profile decoding, composition, scrolling and memory with Instruments.
-3. Prefer system acceleration (Core Animation / Core Image / Accelerate-vImage) when it solves the measured bottleneck.
-4. Consider a Metal tile/compositor path only if profiling shows the CPU `PageCompositor` or very large-page scrolling remains a real bottleneck.
+1. Avoid unnecessary full-page rerenders during interactive zoom.
+2. Profile decoding, composition, scrolling, zoom, and memory with Instruments.
+3. Prefer Core Animation / Core Image / Accelerate-vImage when they solve the measured bottleneck.
+4. Consider a Metal tile/compositor path only if profiling shows the CPU compositor or very-large-page scrolling remains a material bottleneck.
 
-The entropy / format decoders (BZZ, ZP, JB2, much of IW44) remain CPU-oriented. GPU work is most promising for layer composition, scaling, themes and visible-tile rendering, not for rewriting the whole codec stack.
+Entropy/format decoding (BZZ, ZP, JB2, much of IW44) remains CPU-oriented. GPU work is most promising for composition, scaling, themes, and visible-tile rendering. MetalFX is not currently justified.
 
-MetalFX is not currently justified for a document viewer.
+## Implementation order from current main
 
-## Recommended implementation order
-
-1. Correct DjVu UTI declaration.
-2. `TXTa` / `TXTz` parser with resource limits and tests.
-3. In-app `Command-F` search and result navigation/highlighting.
-4. Vision OCR fallback for pages without text.
-5. Modern macOS toolbar/search presentation with macOS 14 fallback.
-6. macOS Spotlight `.mdimporter` using embedded text only.
-7. Quick Look preview and Finder thumbnail support.
-8. Instruments profiling of zoom/scroll/compositor.
-9. Core Image / Accelerate optimizations where measured.
-10. Metal tile renderer only if measurements justify it.
+1. Vision OCR fallback for pages without embedded text.
+2. Modern macOS toolbar/search presentation.
+3. Spotlight `.mdimporter` using embedded text only.
+4. Quick Look preview and Finder thumbnail support.
+5. Instruments profiling of zoom/scroll/compositor.
+6. Core Image / Accelerate optimizations where measured.
+7. Metal tile renderer only if measurements justify it.
 
 ## Release discipline
 
-Keep decoder/security fixes, system integrations, UI changes and rendering optimizations in separate focused PRs. Preserve the existing preference for one meaningful commit per small PR when practical. Do not raise minimum OS versions merely because CI uses a newer SDK.
+Keep decoder/security fixes, OCR, system integrations, UI changes, and rendering optimizations in separate focused PRs. Prefer one meaningful commit per small PR. Upstream mergeability is not a constraint, but reviewability, security boundaries, and deployment-target discipline still are.

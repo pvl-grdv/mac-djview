@@ -1,25 +1,35 @@
 # MacDjView
 
-A native macOS/iOS DjVu document viewer written entirely in Swift — no external C libraries or dependencies. Implements the DjVu file format decoder from scratch, including IFF parsing, ZP-Coder arithmetic decoding, IW44 wavelet image codec, JB2 symbol codec, and layer composition.
+MacDjView is a native macOS/iOS DjVu document viewer written in Swift. The app contains a pure-Swift DjVu decoder with no third-party runtime dependencies and uses Apple frameworks for the UI and platform integration.
+
+This repository is maintained as an independent downstream product. See [Product direction](docs/product-direction.md) and the [Platform integration roadmap](docs/roadmap.md).
 
 ![MacDjView screenshot](docs/screenshot.png)
 
-## Features
+## Current features
 
-- Full DjVu decoder: IFF85 container, BZZ, ZP-Coder, IW44 wavelets, JB2 bitmaps
-- Multi-page document support with shared symbol dictionaries
-- Background image + foreground text/mask layer composition
-- SwiftUI viewer with page navigation and zoom
-- Standalone `.app` bundle via build script
+- Pure-Swift DjVu decoding: IFF, BZZ, ZP-Coder, IW44, JB2, palettes, shared dictionaries, and page composition.
+- Multi-page documents with single-page, two-page, paged, and continuous viewing modes.
+- App Sandbox with read-only access to user-selected files and no network entitlement.
+- Apple Silicon macOS application bundle (`arm64` only).
+- Imported DjVu type declaration: `org.djvu.djvu` for `.djvu` / `.djv` and `image/vnd.djvu`.
+- Embedded DjVu text decoding from `TXTa` and `TXTz` chunks with bounded resource usage.
+- Native document search using SwiftUI `.searchable`.
+- macOS find commands: `Command-F`, `Command-G`, and `Shift-Command-G`.
+- Search-result navigation and page highlighting using DjVu text-zone coordinates.
+- Icon Composer app icon compiled into `Assets.car` with an ICNS fallback.
+- Headless decode/render performance mode via `--test`.
+
+Not implemented yet: Vision OCR fallback, Spotlight content importer, Quick Look preview, Finder thumbnails, and the planned modern toolbar refresh. Their status is tracked in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Requirements
 
-- macOS 14 (Sonoma) or later on Apple Silicon (arm64)
-- iOS 17 / iPadOS 17 or later
-- Swift 5.10+
-- Full Xcode is required to build the SwiftUI application
+- macOS 14 (Sonoma) or later on Apple Silicon (`arm64`).
+- iOS/iPadOS 17 or later.
+- Swift tools 5.10+.
+- Full Xcode is required for the packaged macOS app because the Icon Composer source is compiled with `actool`.
 
-The deployment targets are based on the APIs currently used by the app. CI may build with newer Xcode/SDK versions (including the iOS 27 SDK) without raising the minimum supported OS.
+CI can use newer Xcode/SDK releases without raising the deployment targets unless the source actually adopts APIs that require a newer OS.
 
 ## Building
 
@@ -33,23 +43,19 @@ swift build -c release
 # Run directly
 swift run MacDjView
 
-# Create .app bundle
+# Create the arm64 macOS .app bundle
 ./scripts/make-app-bundle.sh
 ```
 
-You can also open the project in Xcode — just open `Package.swift`.
+You can also open `Package.swift` in Xcode.
 
-For iOS/iPadOS, open `Package.swift` in Xcode, select an iPad or iPhone target, and build. CI verifies a physical-device arm64 build with an iOS/iPadOS 17 deployment target against the iOS 27 SDK. Creating an installable build for a physical device requires Apple development signing/provisioning.
+For iOS/iPadOS, open `Package.swift` in Xcode, select an iPhone or iPad destination, and build. CI verifies an arm64 physical-device compile with the iOS/iPadOS 17 deployment target. Installing on a physical device requires Apple development signing/provisioning.
 
-## macOS Releases and Gatekeeper
+## macOS releases and Gatekeeper
 
-GitHub Releases contain an Apple Silicon `MacDjView-macOS-arm64.app.zip` plus a SHA-256 checksum file. The app is ad-hoc signed with App Sandbox and read-only access to user-selected files, but it is **not Apple-notarized** because Developer ID notarization requires a paid Apple Developer Program membership.
+GitHub release builds contain an Apple Silicon `MacDjView-macOS-arm64.app.zip` plus a SHA-256 checksum. The app is ad-hoc signed with App Sandbox entitlements, but is not Developer ID notarized.
 
-Because of that, macOS can show:
-
-> Apple could not verify “MacDjView.app” is free of malware that may harm your Mac or compromise your privacy.
-
-Before overriding Gatekeeper, verify the downloaded archive and the app signature:
+Before overriding Gatekeeper, verify the archive and signature:
 
 ```bash
 shasum -a 256 -c MacDjView-macOS-arm64.app.zip.sha256
@@ -60,7 +66,7 @@ codesign -dvvv --entitlements :- MacDjView.app
 
 The entitlements should include `com.apple.security.app-sandbox` and `com.apple.security.files.user-selected.read-only`, and should not include network client/server entitlements.
 
-After verification, use **Finder → right-click MacDjView.app → Open**. If macOS still blocks it, use **System Settings → Privacy & Security → Open Anyway**. For a copy you have verified yourself, the command-line equivalent is:
+After verification, use **Finder → right-click MacDjView.app → Open** or **System Settings → Privacy & Security → Open Anyway**. For a copy you have independently verified, the command-line equivalent is:
 
 ```bash
 xattr -dr com.apple.quarantine MacDjView.app
@@ -68,112 +74,72 @@ xattr -dr com.apple.quarantine MacDjView.app
 
 Do not remove quarantine from an app you have not verified.
 
-## Unit Tests
+## Tests
 
 ```bash
-# Run all unit tests
 make unit-test
-
-# Or directly
+# or
 ./scripts/run-tests.sh
 ```
 
-Tests cover the decoder's post-decode pipeline: ByteStream reads, LinearBytemap wavelet storage, IW44 color conversion (SIMD and scalar paths), wavelet transform correctness, and PageCompositor layer composition.
+Tests cover binary bounds checking, decoder safety limits, IFF parsing, wavelet and compositor behavior, embedded DjVu text decoding, Unicode/text-zone handling, and document search.
 
-CI runs automatically on pushes to `main` and pull requests via GitHub Actions.
+CI runs on pushes to `main` and pull requests. The macOS job runs unit tests, builds the arm64 app, verifies sandbox entitlements, and packages the release artifact. CI also compiles the iOS/iPadOS target.
 
-## CLI Test & Performance Testing
+## CLI decode/performance testing
 
-The `--test` flag renders all pages headlessly and reports per-page timing and memory usage:
+The `--test` flag renders pages headlessly and reports timing and memory usage:
 
 ```bash
-# Render all pages (always use release mode for meaningful numbers)
 swift run -c release MacDjView -- --test document.djvu
-
-# Start from a specific page (0-indexed)
 swift run -c release MacDjView -- --test document.djvu 100
 ```
 
-Output includes per-page render time and resident memory, plus a summary:
+The optional page argument is zero-based. For performance work, compare p95 render time and peak resident memory rather than relying on debug builds.
 
-```
-=== Performance Summary ===
-Pages rendered: 1170/1170 (0 errors)
-Total time: 120450ms
-Per-page: avg=103ms median=85ms p95=210ms max=450ms
-Memory: base=52MB peak=380MB final=290MB
-===========================
-```
+## Project structure
 
-To catch performance regressions, save and diff results:
-
-```bash
-swift run -c release MacDjView -- --test large.djvu 2> perf-baseline.txt
-# ... make changes ...
-swift run -c release MacDjView -- --test large.djvu 2> perf-after.txt
-diff perf-baseline.txt perf-after.txt
-```
-
-Key metrics to watch: **p95 render time** and **peak memory**.
-
-## Contributing
-
-1. Fork the repository and create a feature branch
-2. Make your changes following the conventions in [`docs/`](./docs/):
-   - [Code best practices](./docs/code-best-practices.md)
-   - [Naming conventions](./docs/naming-conventions.md)
-   - [Architecture overview](./docs/architecture.md)
-   - [Platform integration roadmap](./docs/roadmap.md)
-   - [Git conventions](./docs/git-conventions.md)
-3. Run unit tests: `make unit-test`
-4. Visual test: `.build/debug/MacDjView --test <your-file>.djvu`
-5. Submit a pull request
-
-### Key guidelines
-
-- **No external dependencies** — everything is implemented from scratch using only Swift standard library and Apple frameworks
-- Use wrapping arithmetic (`&+`, `&-`, `&*`) in codec code to match DjVu spec behavior
-- DjVu images are bottom-up (row 0 = bottom) — coordinate flips happen at the rendering boundary
-- Reference implementation for spec questions: [DjVu.js by RussCoder](https://github.com/nicuss/DjVujs)
-
-## Project Structure
-
-```
+```text
 Sources/MacDjView/
-├── MacDjViewApp.swift        # App entry point, menu bar commands (File/View/Go), CLI --test mode
-├── AppDelegate.swift         # NSApplicationDelegate (macOS), OpenURLHandler, SettingsView
-├── Platform.swift            # Cross-platform bridge: PlatformImage typealias (NSImage/UIImage)
-├── ContentView.swift         # Main window: toolbar, status bar, view-mode switching, file import
-├── DocumentViewModel.swift   # Document state (page, zoom, layout, color theme), navigation, rendering
-├── PageImageView.swift       # Page display views (single/two-page/continuous), PageCache, color themes
-├── Assets.xcassets/          # App icon and asset catalog
-├── PrivacyInfo.xcprivacy     # App privacy manifest
-│
-├── DjVu/                     # Decoder library (pure Swift, no dependencies)
-│   ├── DjVuDocument.swift    # Top-level document: DJVM/DJVU parsing, DIRM directory, page access
-│   ├── DjVuPage.swift        # Single page: chunk inventory, lazy decode of BG44/Sjbz/FGbz layers
-│   ├── DjVuError.swift       # Error types for decoder failures
-│   ├── IFFParser.swift       # IFF85 container parser (FORM:DJVU/DJVM chunks)
-│   ├── ByteStream.swift      # Bit/byte stream reader for all codecs
-│   ├── ZPCodec.swift         # ZP-Coder adaptive binary arithmetic codec
-│   ├── BZZDecoder.swift      # BZZ general-purpose decoder (ZP-based, used for DIRM/Sjbz)
-│   ├── IW44Decoder.swift     # IW44 wavelet codec: progressive decoding of BG44 chunks
-│   ├── IW44Image.swift       # IW44 image reconstruction: inverse wavelet, YCbCr→RGB, pixel output
-│   ├── IW44Structures.swift  # IW44 support types: LinearBytemap, wavelet band constants
-│   ├── JB2Decoder.swift      # JB2 symbol codec: decodes Sjbz streams into bitmaps + placements
-│   ├── JB2Dict.swift         # JB2 shared dictionary decoder (Djbz chunks, cross-page symbol reuse)
-│   ├── JB2Image.swift        # JB2 image: bitmap storage, symbol blitting onto mask layer
-│   ├── JB2Structures.swift   # JB2 support types: Bitmap, NumContext tree, record types
-│   └── PageCompositor.swift  # Layer composition: combines BG44 background + JB2 mask + FGbz palette
-│
-Tests/MacDjViewTests/
-├── ByteStreamTests.swift       # Bit/byte reading correctness
-├── LinearBytemapTests.swift    # Wavelet coefficient storage
-├── IW44ImageTests.swift        # YCbCr→RGB color conversion (SIMD + scalar)
-├── WaveletTransformTests.swift # Forward/inverse wavelet transform
-└── PageCompositorTests.swift   # Layer composition logic
+├── MacDjViewApp.swift        # App entry point, commands, CLI --test mode
+├── AppDelegate.swift         # macOS delegate, open-URL handling, settings
+├── ContentView.swift         # Main SwiftUI view, toolbar, search presentation
+├── DocumentViewModel.swift   # Document/view/search state and navigation
+├── PageImageView.swift       # Page views, cache, search highlights
+├── Platform.swift            # macOS/iOS image and color bridge
+├── SafeFileLoader.swift      # Bounded file loading
+├── DjVuUTType.swift          # org.djvu.djvu Uniform Type declaration
+├── PrivacyInfo.xcprivacy     # Privacy manifest
+└── DjVu/
+    ├── DjVuDocument.swift    # Document parsing, page access, embedded text
+    ├── DjVuPage.swift        # Per-page layer/text decoding
+    ├── DjVuText.swift        # TXTa/TXTz text and text-zone parser
+    ├── DjVuSearch.swift      # Bounded document-wide embedded-text search
+    ├── DecodeLimits.swift    # Central resource/work limits
+    ├── IFFParser.swift       # Bounded IFF parser
+    ├── ByteStream.swift      # Bounds-checked binary reader
+    ├── BZZDecoder.swift      # BZZ decoder
+    ├── ZPCodec.swift         # ZP arithmetic decoder
+    ├── IW44*.swift           # Wavelet decode/reconstruction
+    ├── JB2*.swift            # JB2 bitmap/symbol decoding
+    └── PageCompositor.swift  # Layer composition to CGImage
+
+Resources/AppIcon.icon/       # Icon Composer source
+Tests/MacDjViewTests/         # Decoder, safety, text, search, rendering tests
+docs/                         # Architecture, project direction, roadmap, conventions
+scripts/                      # Bundle/test/release helpers
 ```
 
-## License
+## Development workflow
 
-<!-- TODO: choose a license -->
+- Work from short-lived topic branches and merge focused PRs with rebase when practical.
+- Prefer one meaningful commit per small PR.
+- Decoder/security changes, platform integrations, UI changes, and rendering optimizations should remain separable.
+- Prefer native Apple frameworks and system behavior before custom platform code.
+- Upstream mergeability is not a design requirement for this repository.
+
+See [`docs/git-conventions.md`](docs/git-conventions.md) and [`docs/product-direction.md`](docs/product-direction.md).
+
+## Licensing / provenance
+
+This repository originated as a fork of `babanin/mac-djview`. The upstream repository currently does not contain a LICENSE file and its README also leaves licensing unresolved. This repository therefore does not claim a new blanket license for inherited code. Resolve the rights/provenance of inherited code before publishing a project-wide license or making licensing-sensitive distribution decisions.

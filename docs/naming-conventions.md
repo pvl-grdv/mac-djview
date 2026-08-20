@@ -2,52 +2,57 @@
 description: Naming patterns used throughout the codebase
 alwaysApply: true
 ---
-# Naming Conventions
+# Naming conventions
 
-## File Naming
-- Swift files use **PascalCase**: `IW44Decoder.swift`, `JB2Structures.swift`
-- Each codec has a consistent file triplet:
-  - `*Decoder.swift` — Decoding logic (reads ZP-coded bitstream)
-  - `*Image.swift` — Reconstruction (inverse transform, pixel output, rendering)
-  - `*Structures.swift` — Data types, constants, tables
+## Swift files and types
 
-## Type Naming
-- Classes and structs: **PascalCase** — `IW44Decoder`, `JB2Bitmap`, `LinearBytemap`
-- Enums: **PascalCase** — `DjVuError`, `CoefficientFlag`
-- Protocols: Not currently used (concrete types preferred for this codec)
+- Swift files and nominal types use PascalCase: `DjVuDocument.swift`, `DjVuTextLayer`, `DocumentViewModel`.
+- Methods/properties/local values use lower camel case.
+- Keep standard Apple/format initialisms recognizable: `URL`, `UTF8`, `CGImage`, `IW44`, `JB2`, `BZZ`, `ZP`.
 
-## Variable & Method Naming
-- Properties and methods: **camelCase** — `blocksPerRow`, `decodeSlice()`, `getPixels()`
-- Match DjVu.js names where possible for traceability:
-  - `quantLo` / `quantHi` (not `quantizationLow`)
-  - `curband` (not `currentBand`)
-  - `bbstate` (not `blockBandState`)
-  - `inreaseCoefCtx` (intentional misspelling — matches DjVu.js)
-  - `decodeBucketCtx`, `decodeCoefCtx`, `activateCoefCtx`
+Codec files generally follow responsibility-oriented names:
 
-## DjVu Chunk IDs
-- Chunk IDs are **4-character ASCII strings**, case-sensitive:
-  - `"BG44"` — Background IW44 data
-  - `"FG44"` — Foreground IW44 data
-  - `"Sjbz"` — JB2 mask data
-  - `"Djbz"` — JB2 shared dictionary
-  - `"FGbz"` — Foreground color palette
-  - `"INFO"` — Page dimensions and DPI
-  - `"DIRM"` — Document directory (multi-page)
-  - `"INCL"` — Reference to shared dictionary by name
-  - `"TXTz"` — Hidden text layer (compressed)
-- FORM types: `"DJVM"` (multi-page document), `"DJVU"` (single page), `"DJVI"` (shared data)
+- `*Decoder.swift` — encoded stream/codec logic;
+- `*Image.swift` — reconstructed image/bitmap representation;
+- `*Structures.swift` — format support types;
+- purpose-specific components use explicit names such as `DjVuText.swift`, `DjVuSearch.swift`, and `DecodeLimits.swift`.
 
-## Constants
-- Top-level constants: **camelCase** — `zigzagRow`, `zigzagCol`, `bandBuckets`, `quant_lo`, `quant_hi`
-- Struct-scoped constants: **UPPER_CASE** via static lets — `CoefficientFlag.ZERO`, `.ACTIVE`, `.NEW`, `.UNK`
+## Format names
 
-## Context Arrays (ZP-Coder)
-- Named to match DjVu.js for easy cross-reference:
-  - `decodeBucketCtx` — Block band activation
-  - `decodeCoefCtx` — Bucket activation (80 entries)
-  - `activateCoefCtx` — New coefficient activation (16 entries)
-  - `inreaseCoefCtx` — Active coefficient refinement (1 entry)
-  - `offsetTypeCtx` — JB2 new-line flag
-  - `hoffCtx`, `voffCtx` — JB2 new-line offsets
-  - `shoffCtx`, `svoffCtx` — JB2 same-line offsets
+Names that mirror the DjVu format/reference implementation may be retained when they make codec auditing easier (`quantLo`, `curband`, context-array names, etc.). Do not preserve an awkward upstream/reference name outside codec internals when a clearer Swift/product name is better.
+
+Upstream mergeability is not a naming constraint.
+
+## DjVu chunk IDs
+
+Chunk IDs are four-character case-sensitive strings from the file format, for example:
+
+- `BG44`, `FG44` — IW44 image layers;
+- `Sjbz` — JB2 page mask;
+- `Djbz` — shared JB2 dictionary;
+- `FGbz` — foreground palette;
+- `INFO` — page metadata;
+- `DIRM` — multi-page directory;
+- `INCL` — shared-data reference;
+- `TXTa`, `TXTz` — hidden text (plain/compressed).
+
+FORM types include `DJVM` (multi-page), `DJVU` (page), and `DJVI` (shared data).
+
+## Units and coordinate names
+
+Include units/space in names when ambiguity matters, especially across rendering/text code:
+
+- `pageIndex`, `pageHeight`;
+- `textByteRange` for UTF-8 byte offsets;
+- `zoomPercent` for integer cache keys;
+- `nativePageSize` for unscaled page dimensions.
+
+Do not call byte offsets `String.Index` values or mix DjVu bottom-up coordinates with top-left UI coordinates under the same ambiguous name.
+
+## Limits
+
+Security/work limits belong under `DecodeLimits` and use descriptive lower-camel static names such as `maxFileBytes`, `maxTextZonesPerPage`, and `maxSearchResults`.
+
+## UI/product naming
+
+Use Apple terminology for native platform concepts where practical (`searchable`, Quick Look, Spotlight importer, thumbnail provider). Use `MacDjView` for the current product/module name unless a deliberate product rename is made across bundle metadata, docs, and release tooling together.

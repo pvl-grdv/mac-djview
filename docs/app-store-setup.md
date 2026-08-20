@@ -1,79 +1,88 @@
-# App Store Setup — Manual Steps
+# App Store / signed distribution setup
 
-## Prerequisites
+This document describes future signed distribution. The current GitHub build is ad-hoc signed and not notarized.
 
-1. **Enroll in Apple Developer Program** ($99/year) at https://developer.apple.com/programs/
-2. **Open Xcode → Settings → Accounts** → add your Apple ID, select your team
-3. **Create app icon**: a single 1024×1024 PNG image (any design tool or AI image generator)
-4. Place the PNG as `Sources/MacDjView/Assets.xcassets/AppIcon.appiconset/icon_1024x1024.png`
+## Before starting
 
-## Xcode Project Setup
+1. Enroll in the Apple Developer Program if Developer ID notarization or App Store distribution is required.
+2. Add the Apple ID/team in Xcode Settings → Accounts.
+3. Decide the permanent production bundle identifier before publishing through App Store Connect.
 
-1. **Open** `Package.swift` in Xcode (File → Open → select `Package.swift`)
-2. Xcode resolves the SPM package and shows the `MacDjView` target
-3. **Select the MacDjView scheme** → Edit Scheme → set Build Configuration to Release for Archive
-4. **In the project editor** (click the package in the navigator):
-   - Signing & Capabilities → Team: select your team → enable "Automatically manage signing"
-   - Signing & Capabilities → + Capability → "App Sandbox" → enable "User Selected File (Read Only)"
-   - Signing & Capabilities → + Capability → "Hardened Runtime"
-   - Set Code Signing Entitlements to `MacDjView.entitlements`
-5. **General tab**:
-   - Bundle Identifier: `net.babanin.MacDjView`
-   - Version: `1.0.0`
-   - Build: `1`
-   - App Category: Productivity
-   - Deployment Target: macOS 14.0
+The current bundle script uses:
 
-> **Note**: If Xcode doesn't let you configure signing for a pure SPM executable target, create a thin Xcode project wrapper:
-> 1. File → New → Project → macOS → App → name it `MacDjView`
-> 2. Delete generated boilerplate source files
-> 3. File → Add Package Dependencies → Add Local → select repo root
-> 4. In target's Frameworks, add `MacDjView` from the local package
-> 5. Configure signing on this wrapper target
+`com.mac-djview.MacDjView`
 
-## Info.plist Configuration
+Changing the bundle identifier is acceptable for this independent downstream before a signed production identity is established. Once an App Store product is created, treat its identifier as permanent.
 
-In Xcode's Info tab (or a custom Info.plist), add:
+## Current app assets and platform settings
 
-| Key | Value |
-|-----|-------|
-| `LSApplicationCategoryType` | `public.app-category.productivity` |
-| `NSHumanReadableCopyright` | `Copyright © 2024-2026 MacDjView. All rights reserved.` |
+- macOS deployment target: 14.0.
+- iOS/iPadOS deployment target: 17.0.
+- macOS release architecture: arm64 only.
+- App icon source: `Resources/AppIcon.icon` (Icon Composer), not a standalone 1024×1024 PNG.
+- Privacy manifest: `Sources/MacDjView/PrivacyInfo.xcprivacy`.
+- Sandbox entitlements: `MacDjView.entitlements`.
+- DjVu UTI: `org.djvu.djvu`.
 
-**Document Types** (in Xcode target → Info → Document Types):
+The bundle script compiles the Icon Composer source with `actool`, creates `Assets.car` plus `AppIcon.icns`, generates `Info.plist`, and ad-hoc signs the app.
+
+## Xcode project strategy
+
+The codebase is SwiftPM-first. Opening `Package.swift` in Xcode is sufficient for development and device builds.
+
+For App Store/archive-specific configuration, a thin Xcode app wrapper may be more practical than forcing distribution metadata into the executable SwiftPM target. If a wrapper project is introduced, keep the DjVu decoder/search code in the package and keep signing/extension targets in the Xcode project.
+
+This will also be the natural place for future macOS targets such as Quick Look/thumbnail extensions and any Spotlight plug-in packaging that cannot be expressed cleanly in the current SwiftPM-only bundle script.
+
+## Required capabilities
+
+For the main viewer:
+
+- App Sandbox.
+- User Selected File: Read Only.
+- Hardened Runtime / appropriate signing for Developer ID or App Store distribution.
+
+Do not add network entitlements unless a real product feature requires them.
+
+Future Spotlight/Quick Look components should use the same `org.djvu.djvu` type declaration and tighter resource limits than the main app.
+
+## Document type
+
+Use the existing imported type declaration:
 
 | Field | Value |
-|-------|-------|
-| Name | DjVu Document |
-| Role | Viewer |
-| Content Type Identifier | `org.djvu.djvu` |
-
-**Imported UTIs** (in Xcode target → Info → Imported Type Identifiers):
-
-| Field | Value |
-|-------|-------|
-| Description | DjVu Document |
+|---|---|
+| Type | DjVu Document |
 | Identifier | `org.djvu.djvu` |
-| Conforms To | `public.data` |
+| Conforms to | `public.data` |
 | Extensions | `djvu`, `djv` |
-| MIME Types | `image/vnd.djvu` |
+| MIME | `image/vnd.djvu` |
+| App role | Viewer |
 
-## App Store Connect Setup
+## App Store Connect
 
-1. Go to https://appstoreconnect.apple.com → My Apps → "+" → New App
-2. Platform: **macOS**, Name: **MacDjView**, Bundle ID: `net.babanin.MacDjView`, SKU: `macdjview`
-3. Fill in:
-   - Description and keywords
-   - Category: Productivity
-   - Screenshots (at least one at 1280×800 or 1440×900)
-4. Set pricing (Free or paid)
-5. Add a privacy policy URL (required even if you collect nothing — a simple GitHub Pages or gist works)
+When ready:
 
-## Archive & Submit
+1. Create/register the permanent Bundle ID.
+2. Create the macOS app record in App Store Connect.
+3. Add description, category, screenshots, privacy information, and support/privacy URLs.
+4. Archive with the distribution wrapper/project and upload through Xcode Organizer.
+5. Provide Apple review with a safe sample DjVu document or clear reproduction instructions.
 
-1. In Xcode: **Product → Archive**
-2. In Organizer: select archive → **Distribute App → App Store Connect → Upload**
-3. Xcode validates signing, entitlements, privacy manifest, and icons
-4. In App Store Connect: select the uploaded build → **Submit for Review**
+Do not claim Quick Look, Spotlight content indexing, OCR, or other roadmap features in store metadata until they are present in the submitted build.
 
-> **Review notes tip**: DjVu is niche — include a test `.djvu` file URL or note in review notes so Apple reviewers can test the app.
+## Developer ID distribution outside the App Store
+
+A paid developer account also enables a better GitHub/direct-download path:
+
+1. Sign with Developer ID Application.
+2. Enable Hardened Runtime with the required sandbox entitlements.
+3. Submit the app/archive for notarization.
+4. Staple the notarization ticket.
+5. Verify Gatekeeper with `spctl` before publishing.
+
+Until then, direct GitHub builds remain ad-hoc signed and users should verify checksums/signatures before overriding Gatekeeper.
+
+## Licensing note
+
+Signing/distribution and copyright licensing are separate issues. The inherited upstream code currently has no declared LICENSE file. Resolve that provenance/licensing question before relying on an App Store or other public distribution plan that assumes a particular project-wide license.

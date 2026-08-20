@@ -2,123 +2,165 @@
 description: Decoder architecture and DjVu format reference
 alwaysApply: true
 ---
-# Architecture — DjVu Decoder
+# Architecture — DjVu decoder and text pipeline
 
-## Decoding Pipeline
+## High-level pipeline
 
-```
-DjVu file (IFF container)
+```text
+DjVu file
   │
-  ├── IFFParser.parse() → IFFChunk tree
+  ├── SafeFileLoader                    bounded file read
   │
-  ├── DjVuDocument → parses DIRM directory, enumerates pages
-  │     │
-  │     └── DjVuPage.render() → CGImage
-  │           │
-  │           ├── BG44 chunks → IW44Decoder → IW44Image → background pixels (RGB)
-  │           ├── FG44 chunks → IW44Decoder → IW44Image → foreground pixels (RGB)
-  │           ├── Sjbz chunk  → JB2Decoder  → JB2Image  → mask bitmap (1-bit)
-  │           ├── FGbz chunk  → FGbzPalette → per-blit colors
-  │           ├── Djbz chunk  → JB2Dict     → shared symbol dictionary
-  │           │
-  │           └── PageCompositor.compose()
-  │                 For each pixel:
-  │                   mask[x,y] ? foreground[x,y] : background[x,y]
+  ├── IFFParser.parse()                 bounded FORM/chunk tree
+  │
+  └── DjVuDocument
+        │
+        ├── page metadata / shared dictionaries
+        │
+        ├── DjVuPage.render()           image pipeline
+        │     ├── BG44 / FG44 → IW44
+        │     ├── Sjbz / Djbz → JB2
+        │     ├── FGbz → palette
+        │     └── PageCompositor → CGImage
+        │
+        └── DjVuPage.textLayer()        text pipeline
+              ├── TXTa → direct payload
+              └── TXTz → bounded BZZ decode
+                    ↓
+                 DjVuTextLayer
+                    ├── UTF-8 text
+                    └── text-zone hierarchy / page rectangles
+                          ↓
+                      DjVuSearch
 ```
 
-## IW44 Wavelet Decoder
+The deterministic DjVu decoder/text parser is kept separate from platform features such as SwiftUI search presentation, Vision OCR, Spotlight, and Quick Look.
 
-### Chunk Header (BG44/FG44)
-```
+## Security / resource model
+
+Input files are untrusted. Decoder limits are centralized in `DecodeLimits.swift` and are applied before allocations or expensive work where practical.
+
+Key protections include:
+
+- bounded file size;
+- checked integer arithmetic;
+- bounded IFF lengths, nesting depth, and chunk count;
+- bounded page dimensions and rendered pixel counts;
+- bounded IW44 block/slice work;
+- bounded JB2 symbols, blits, bitmap pixels, records, comments, and blit work;
+- bounded BZZ output;
+- dedicated text-byte, text-zone count/depth, document-text, and search-result limits.
+
+System extensions (Spotlight/Quick Look) should reuse this core but impose tighter extension-specific work limits because they can be invoked automatically by macOS.
+
+## Embedded DjVu text
+
+`DjVuText.swift` decodes page hidden text from:
+
+- `TXTa`: uncompressed text payload;
+- `TXTz`: BZZ-compressed text payload.
+
+The payload begins with a 24-bit UTF-8 text length and can optionally contain a versioned text-zone hierarchy. Text zones preserve:
+
+- kind (`page`, `column`, `region`, `paragraph`, `line`, `word`, `character`);
+- page-space rectangle;
+- UTF-8 byte range in the original page text;
+- child zones.
+
+DjVu zone coordinates are delta-encoded. The parser resolves them into top-left page coordinates matching rendered image/UI space so the same rectangles can be used for search highlighting.
+
+Structural DjVu text separators are normalized only for search/index-friendly `plainText`; original text remains unchanged so zone byte ranges stay valid.
+
+## Document search
+
+`DjVuSearch.swift` searches embedded page text and returns bounded result objects containing:
+
+- page index;
+- matched UTF-8 byte range;
+- matching text-zone rectangles.
+
+`DocumentViewModel` debounces/cancels search work and controls the selected result. `ContentView` uses native SwiftUI `.searchable`, while page views overlay the selected zone rectangles without mutating the rendered DjVu image.
+
+OCR is intentionally outside this pipeline. Future Vision OCR results should be converted into a compatible page-text/result model rather than being embedded into the DjVu decoder.
+
+## IW44 wavelet decoder
+
+### Chunk header (BG44/FG44)
+
+```text
 Byte 0:    serial (uint8) — 0 for first chunk
 Byte 1:    numSlices (uint8)
 If serial == 0:
-  Byte 2:  majver (uint8) — bit 7: grayscale flag; bits 6-0: unused
+  Byte 2:  majver (uint8) — bit 7: grayscale flag
   Byte 3:  minver (uint8)
   Byte 4-5: width (uint16 big-endian)
   Byte 6-7: height (uint16 big-endian)
-  Byte 8:  delayInit byte — bits 6-0: delay before color decoding starts
+  Byte 8:  delayInit
 ```
 
-### Channel Architecture
-- **Separate decoder per channel**: `IW44ChannelDecoder` for Y, Cb, Cr
-- Each has independent: `curband`, `quantLo[]`, `quantHi[]`, ZP contexts, coefficient state
-- All share the same `ZPCodec` bitstream
-- `delayInit`: Cb/Cr decoding starts after `delayInit` slices (Y always decodes)
+### Channel architecture
 
-### Decode Phases (per slice, per block)
-1. **Preliminary flag computation** — classify coefficients as ZERO/UNK/ACTIVE
-2. **Block band decoding pass** — decide if block-band has new coefficients
-3. **Bucket decoding pass** — activate individual buckets within the band
-4. **Newly active coefficient pass** — decode new coefficient values
-5. **Previously active coefficient refinement** — refine existing coefficients
+- Separate `IW44ChannelDecoder` state for Y, Cb, and Cr.
+- Each channel has independent band/quantization/context/coefficient state.
+- Channels share the same ZP bitstream.
+- `delayInit` delays chroma decoding; Y begins immediately.
 
-### Inverse Wavelet Transform
-- 4-level lifting-based DDL 4,4 wavelet
-- Operates on `LinearBytemap` (Int16 array with wrapping arithmetic)
-- Processes columns first, then rows, at each scale level (s=16,8,4,2,1)
+### Decode phases
 
-### Color Conversion
-- Grayscale: `pixel = 127 - normalize(y)` where `normalize(v) = clamp((v + 32) >> 6, -128, 127)`
-- Color (YCbCr → RGB):
-  ```
-  t2 = r + (r >> 1)
-  t3 = y + 128 - (b >> 2)
-  R = y + 128 + t2
-  G = t3 - (t2 >> 1)
-  B = t3 + (b << 1)
-  ```
+1. Preliminary coefficient classification.
+2. Block-band activation.
+3. Bucket activation.
+4. Newly active coefficient values.
+5. Refinement of previously active coefficients.
 
-## JB2 Symbol Decoder
+### Inverse wavelet transform
 
-### Init Sequence (critical order)
-1. Read record type via `decodeNum(0, 11, recordTypeCtx)`
-2. If type == 9: read inherited dict size, read next type
-3. Read image width and height via `decodeNum(0, 262142, imageSizeCtx)`
-4. Read flag via **raw ZP bit** `zp.decode(ctx, 0)` — NOT `decodeNum`!
+- Four-level lifting-based DDL 4,4 wavelet.
+- Operates on `LinearBytemap` with format-appropriate wrapping arithmetic.
+- Processes columns then rows at successive scale levels.
 
-### Record Types
-| Type | Description | Library | Image |
-|------|-------------|---------|-------|
-| 1 | New symbol (direct bitmap) | add | add blit |
-| 2 | New symbol (direct bitmap) | add | — |
-| 3 | New symbol (direct bitmap) | — | add blit |
-| 4 | Refinement from library | add | add blit |
-| 5 | Refinement from library | add | — |
-| 6 | Refinement from library | — | add blit |
-| 7 | Matched copy (no refinement) | — | add blit |
-| 8 | Non-symbol data (absolute coords) | — | add blit |
-| 9 | Numcoder reset | — | — |
-| 10 | Comment | — | — |
-| 11 | End of data | — | — |
+## JB2 symbol decoder
 
-### Coordinate System
-- Blit coordinates (x, y) are in DjVu bottom-up space
-- `firstLeft` initializes to **-1** (not 0)
-- `lastRight = x + width - 1` (not `x + width`)
-- New-line and same-line offsets use **separate** NumContext pairs
+### Init sequence
 
-### Refinement Alignment
-```
-rowshift = ((model.height - 1) >> 1) - ((new.height - 1) >> 1)
-colshift = ((model.width - 1) >> 1) - ((new.width - 1) >> 1)
-model_row = current_row + rowshift
-model_col = current_col + colshift
-```
+1. Decode record type.
+2. If record 9: decode inherited dictionary size and next record.
+3. Decode image width/height.
+4. Decode the flag with the raw ZP bit path required by the format.
 
-## ZP-Coder (Arithmetic Decoder)
+### Record types
 
-- Adaptive binary arithmetic coding with 256-entry probability state table
-- `decode(ctx, n)` — decode one bit using context array at index n
-- `IWdecode()` — decode one bit without context (for IW44 sign bits)
-- `decodeNum(ctx, low, high)` — 3-phase number decoding (sign, magnitude class, binary refinement)
-- `NumContext` — binary tree of ZP contexts for multi-bit number encoding
+| Type | Description |
+|---|---|
+| 1 | New direct symbol + library + blit |
+| 2 | New direct symbol + library |
+| 3 | New direct symbol + blit |
+| 4 | Refined symbol + library + blit |
+| 5 | Refined symbol + library |
+| 6 | Refined symbol + blit |
+| 7 | Matched copy blit |
+| 8 | Non-symbol data / absolute coordinates |
+| 9 | Numcoder reset |
+| 10 | Comment |
+| 11 | End of data |
 
-## Page Composition
+JB2 source coordinates are bottom-up. Coordinate conversion to top-down display space occurs at the rendering/text-boundary layers rather than being mixed throughout codec logic.
 
-The compositor combines layers at the page's native resolution:
-1. **Background** (IW44): Often lower resolution than the page; upscaled via nearest-neighbor
-2. **Foreground** (IW44 or FGbz palette): Provides color for masked pixels
-3. **Mask** (JB2): 1-bit at page resolution; determines which pixels use foreground vs background
-4. **Output rule**: `pixel = mask[x,y] ? foreground_color : background_color`
-5. All coordinate conversions handle the DjVu bottom-up → screen top-down flip
+## ZP-Coder
+
+- Adaptive binary arithmetic coding with a probability-state table.
+- Context-coded single-bit decode for format state.
+- Context-free IW decode path where required.
+- Number decoding uses `NumContext` trees.
+
+## Page composition
+
+The compositor combines layers at the requested render scale:
+
+1. IW44 background.
+2. Optional IW44/palette foreground.
+3. JB2 mask.
+4. Mask chooses foreground vs background pixels.
+5. Output is a top-down `CGImage` for SwiftUI/AppKit/UIKit display.
+
+The current compositor is CPU-based. Rendering optimization should be measurement-driven; see `roadmap.md` for the Core Image/Accelerate/Metal strategy.
