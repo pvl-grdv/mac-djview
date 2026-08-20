@@ -1,4 +1,4 @@
-name: Build sandboxed macOS app
+name: Build and release
 
 on:
   workflow_dispatch:
@@ -7,36 +7,53 @@ on:
       - main
   push:
     branches:
-      - build/sandboxed-macos-artifact
+      - main
+      - release-ci
+    tags:
+      - 'v*'
 
 permissions:
   contents: read
 
 jobs:
-  build:
-    runs-on: macos-15
+  macos:
+    name: macOS 26 arm64
+    runs-on: macos-26
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Show toolchain
         run: |
           set -euo pipefail
+          uname -m
+          sw_vers
           xcode-select -p
           xcodebuild -version
           swift --version
 
-      - name: Build universal signed app
+      - name: Build arm64 app
         run: |
           set -euo pipefail
-          ./scripts/make-app-bundle.sh --arch arm64 --arch x86_64
-          file MacDjView.app/Contents/MacOS/MacDjView
+
+          VERSION="0.0.0"
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+
+          MACDJVIEW_VERSION="$VERSION" \
+          MACDJVIEW_BUILD_NUMBER="$GITHUB_RUN_NUMBER" \
+            ./scripts/make-app-bundle.sh
+
+          test "$(lipo -archs MacDjView.app/Contents/MacOS/MacDjView)" = "arm64"
+          test "$(plutil -extract LSMinimumSystemVersion raw MacDjView.app/Contents/Info.plist)" = "26.0"
+          test -f MacDjView.app/Contents/Resources/PrivacyInfo.xcprivacy
 
       - name: Verify sandbox entitlements
         run: |
           set -euo pipefail
-          ENTITLEMENTS="$(codesign -d --entitlements :- MacDjView.app 2>&1)"
+          ENTITLEMENTS="$(codesign -dvvv --entitlements :- MacDjView.app 2>&1)"
           printf '%s\n' "$ENTITLEMENTS"
 
           grep -q '<key>com.apple.security.app-sandbox</key>' <<< "$ENTITLEMENTS"
@@ -54,18 +71,84 @@ jobs:
 
           codesign --verify --strict --verbose=2 MacDjView.app
 
-      - name: Create ZIP
+      - name: Package release artifact
         run: |
           set -euo pipefail
-          ditto -c -k --sequesterRsrc --keepParent MacDjView.app MacDjView.zip
-          shasum -a 256 MacDjView.zip | tee MacDjView.zip.sha256
+          ARCHIVE="MacDjView-macOS-26-arm64.app.zip"
+          ditto -c -k --sequesterRsrc --keepParent MacDjView.app "$ARCHIVE"
+          shasum -a 256 "$ARCHIVE" | tee "$ARCHIVE.sha256"
 
-      - name: Upload app artifact
+      - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MacDjView-macOS
+          name: MacDjView-macOS-26-arm64
           path: |
-            MacDjView.zip
-            MacDjView.zip.sha256
+            MacDjView-macOS-26-arm64.app.zip
+            MacDjView-macOS-26-arm64.app.zip.sha256
           if-no-files-found: error
           retention-days: 14
+
+  ios-compatibility:
+    name: iPadOS 17+ with iOS 27 SDK
+    runs-on: xcode-27
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Show Xcode and iOS SDK
+        run: |
+          set -euo pipefail
+          uname -m
+          xcodebuild -version
+          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "iPhoneOS SDK: $SDK_VERSION"
+          [[ "$SDK_VERSION" == 27.* ]]
+
+      - name: Compile for physical iOS/iPadOS device
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -scheme MacDjView \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath .build/ios27 \
+            CODE_SIGNING_ALLOWED=NO \
+            IPHONEOS_DEPLOYMENT_TARGET=17.0 \
+            build
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - macos
+      - ios-compatibility
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: MacDjView-macOS-26-arm64
+          path: release
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ARCHIVE="release/MacDjView-macOS-26-arm64.app.zip"
+          CHECKSUM="$ARCHIVE.sha256"
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" "$CHECKSUM" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              "$ARCHIVE" \
+              "$CHECKSUM" \
+              --verify-tag \
+              --generate-notes \
+              --title "MacDjView $GITHUB_REF_NAME"
+          fi
