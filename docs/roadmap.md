@@ -52,26 +52,33 @@ Vision OCR is an app feature, not a prerequisite for basic DjVu support.
 
 ## macOS Spotlight content indexing
 
-### Primary integration: Spotlight Importer
+### Supported macOS integration: Spotlight importer plug-in
 
 For system-wide macOS search of arbitrary `.djvu` files, use a Spotlight metadata importer (`.mdimporter`) bundled inside:
 
 `MacDjView.app/Contents/Library/Spotlight/`
 
-This is the correct integration for a custom file format. The importer should claim `org.djvu.djvu`, parse the document with strict resource limits, and populate standard Spotlight metadata, especially:
+This remains Apple's documented integration for custom file formats on macOS. The current `CSImportExtension` documentation explicitly states that Spotlight File Import extensions do not provide this functionality on macOS and directs Mac developers to a Spotlight importer plug-in instead.
+
+The importer should claim `org.djvu.djvu`, parse the document with strict resource limits, and populate standard Spotlight metadata, especially:
 
 - `kMDItemTextContent` — combined embedded `TXTa` / `TXTz` text;
 - `kMDItemNumberOfPages` — page count;
 - `kMDItemTitle` when a reliable document title exists;
 - standard language / author / subject keys only when corresponding DjVu metadata is actually available.
 
-`kMDItemTextContent` is specifically intended for the text representation supplied by a Spotlight importer. Spotlight can query it even though applications cannot read that attribute back directly.
+`kMDItemTextContent` is intended for the text representation supplied by a Spotlight importer. Spotlight can search it even though applications cannot read that attribute back directly.
 
-### Why not Core Spotlight as the primary solution
+### Core Spotlight and CSImportExtension
 
-Core Spotlight is useful for content an application owns or explicitly knows about, but it is not a replacement for a format importer when the goal is: “install MacDjView and let macOS index all DjVu files that Spotlight can see.” A sandboxed viewer should not crawl the user's disk to build its own parallel index.
+Use modern Core Spotlight APIs where they are actually supported and appropriate, but do not substitute them for the macOS file-format importer:
 
-Core Spotlight may be considered later for app-generated data, such as OCR results for documents the user explicitly opened, but the `.mdimporter` remains the primary system-wide DjVu integration.
+- `CSImportExtension` is the modern Spotlight File Import extension API, but Apple's current documentation explicitly says it does not provide the custom-file importing functionality on macOS.
+- `CSSearchableIndex` remains useful for app-owned or app-generated searchable entities.
+- Core Spotlight may be considered later for OCR results or other app-owned data associated with documents the user explicitly opened.
+- A sandboxed viewer must not crawl the user's disk to build a parallel index of arbitrary DjVu files.
+
+If Apple changes the macOS support status of `CSImportExtension` in a future SDK, reevaluate this decision against the then-current documentation and a real-device/macOS test before migrating.
 
 ### Importer performance and security rules
 
@@ -95,10 +102,9 @@ mdfind "a known phrase from the DjVu"
 
 When the importer changes, reimport the claimed UTI/importer and verify that the expected file is found by normal Finder/Spotlight search.
 
-Apple's current `mdimport` tool still documents testing and re-indexing Spotlight plug-ins, and the Xcode product type `com.apple.product-type.spotlight-importer` remains present in current tooling, although Apple's primary programming guide for the CFPlugin format is archived.
-
 References:
 
+- https://developer.apple.com/documentation/corespotlight/csimportextension
 - https://developer.apple.com/library/archive/documentation/Carbon/Conceptual/MDImporters/Concepts/WritingAnImp.html
 - https://developer.apple.com/library/archive/documentation/Carbon/Conceptual/MDImporters/Concepts/AssigningDataToAttrs.html
 - `man mdimport`
@@ -154,7 +160,7 @@ MetalFX is not currently justified for a document viewer.
 3. In-app `Command-F` search and result navigation/highlighting.
 4. Vision OCR fallback for pages without text.
 5. Modern macOS toolbar/search presentation with macOS 14 fallback.
-6. Spotlight `.mdimporter` using embedded text only.
+6. macOS Spotlight `.mdimporter` using embedded text only.
 7. Quick Look preview and Finder thumbnail support.
 8. Instruments profiling of zoom/scroll/compositor.
 9. Core Image / Accelerate optimizations where measured.

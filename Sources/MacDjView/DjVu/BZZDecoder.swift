@@ -190,8 +190,16 @@ final class BZZDecoder {
         return size
     }
 
-    /// Decode BZZ-compressed data into a ByteStream with a global output/work cap.
-    static func decode(stream: ByteStream) throws -> ByteStream {
+    /// Decode BZZ-compressed data into a ByteStream with a caller-selectable
+    /// output cap. The global BZZ limit remains the absolute ceiling.
+    static func decode(
+        stream: ByteStream,
+        maxOutputBytes: Int = DecodeLimits.maxBZZOutputBytes
+    ) throws -> ByteStream {
+        guard maxOutputBytes >= 0, maxOutputBytes <= DecodeLimits.maxBZZOutputBytes else {
+            throw DjVuError.resourceLimitExceeded("invalid BZZ output limit")
+        }
+
         let zp = ZPCodec(stream: stream)
         let decoder = BZZDecoder(zp: zp)
         var result = Data()
@@ -210,7 +218,7 @@ final class BZZDecoder {
             let newSize = try DecodeLimits.checkedAdd(
                 result.count, payloadSize, context: "BZZ output size"
             )
-            guard newSize <= DecodeLimits.maxBZZOutputBytes else {
+            guard newSize <= maxOutputBytes else {
                 throw DjVuError.resourceLimitExceeded("BZZ output is too large")
             }
 

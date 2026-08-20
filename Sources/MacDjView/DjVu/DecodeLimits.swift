@@ -26,8 +26,25 @@ enum DecodeLimits {
 
     static let maxBZZOutputBytes = 64 * 1024 * 1024
 
+    // Searchable text is normally tiny compared with rendered page data. These
+    // caps are intentionally generous while preventing hostile TXTz streams from
+    // allocating or recursively constructing unbounded text structures.
+    static let maxTextBytesPerPage = 8 * 1024 * 1024
+    static let maxDecodedTextChunkBytes = 16 * 1024 * 1024
+    static let maxTextZonesPerPage = 100_000
+    static let maxTextZoneDepth = 32
+    static let maxDocumentTextBytes = 64 * 1024 * 1024
+
     static func checkedAdd(_ lhs: Int, _ rhs: Int, context: String) throws -> Int {
         let (value, overflow) = lhs.addingReportingOverflow(rhs)
+        guard !overflow else {
+            throw DjVuError.resourceLimitExceeded("integer overflow while calculating \(context)")
+        }
+        return value
+    }
+
+    static func checkedSubtract(_ lhs: Int, _ rhs: Int, context: String) throws -> Int {
+        let (value, overflow) = lhs.subtractingReportingOverflow(rhs)
         guard !overflow else {
             throw DjVuError.resourceLimitExceeded("integer overflow while calculating \(context)")
         }

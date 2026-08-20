@@ -230,16 +230,50 @@ final class DjVuDocument: @unchecked Sendable {
         return sharedDicts.first
     }
 
-    func renderPage(at index: Int, scale: Double = 1.0) throws -> CGImage {
+    private func page(at index: Int) throws -> DjVuPage {
         guard index >= 0, index < pageCount else {
             throw DjVuError.invalidPageIndex(index)
         }
+        return DjVuPage(
+            chunk: pageChunks[index],
+            info: pages[index],
+            sharedDict: sharedDictForPage(at: index)
+        )
+    }
 
-        let pageChunk = pageChunks[index]
-        let info = pages[index]
-        let dict = sharedDictForPage(at: index)
+    func textLayer(at index: Int) throws -> DjVuTextLayer? {
+        try page(at: index).textLayer()
+    }
 
-        let page = DjVuPage(chunk: pageChunk, info: info, sharedDict: dict)
-        return try page.render(scale: scale)
+    /// Concatenate embedded TXTa/TXTz content for app search, export, or a
+    /// Spotlight importer. This never invokes OCR and enforces a document-wide cap.
+    func embeddedText() throws -> String {
+        var result = ""
+        var byteCount = 0
+
+        for index in 0..<pageCount {
+            guard let layer = try textLayer(at: index) else { continue }
+            let pageText = layer.plainText
+            if pageText.isEmpty { continue }
+
+            let separator = result.isEmpty ? "" : "\n\n"
+            let additionBytes = try DecodeLimits.checkedAdd(
+                separator.utf8.count, pageText.utf8.count, context: "document text size"
+            )
+            byteCount = try DecodeLimits.checkedAdd(
+                byteCount, additionBytes, context: "document text size"
+            )
+            guard byteCount <= DecodeLimits.maxDocumentTextBytes else {
+                throw DjVuError.resourceLimitExceeded("DjVu document contains too much embedded text")
+            }
+
+            result.append(separator)
+            result.append(pageText)
+        }
+        return result
+    }
+
+    func renderPage(at index: Int, scale: Double = 1.0) throws -> CGImage {
+        try page(at: index).render(scale: scale)
     }
 }
