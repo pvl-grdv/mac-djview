@@ -1,20 +1,30 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-echo "Building MacDjView..."
-swift build -c release
+ENTITLEMENTS="MacDjView.entitlements"
+APP_BUNDLE="MacDjView.app"
+APP_DIR="$APP_BUNDLE/Contents"
 
-APP_DIR="MacDjView.app/Contents"
+if [[ ! -f "$ENTITLEMENTS" ]]; then
+    echo "Missing entitlements file: $ENTITLEMENTS" >&2
+    exit 1
+fi
+
+echo "Building MacDjView..."
+swift build -c release "$@"
+BIN_DIR="$(swift build -c release "$@" --show-bin-path)"
+
+rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_DIR/MacOS"
 mkdir -p "$APP_DIR/Resources"
 
-# Copy binary and strip debug symbols (saves ~50% of binary size)
-cp .build/release/MacDjView "$APP_DIR/MacOS/"
+# Copy binary and strip debug symbols.
+cp "$BIN_DIR/MacDjView" "$APP_DIR/MacOS/"
 strip "$APP_DIR/MacOS/MacDjView"
 
-# Write Info.plist
+# Write Info.plist.
 cat > "$APP_DIR/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -64,5 +74,11 @@ cat > "$APP_DIR/Info.plist" << 'PLIST'
 </plist>
 PLIST
 
-echo "Created MacDjView.app"
-echo "Run with: open MacDjView.app"
+# Ad-hoc sign the app and apply the restrictive sandbox entitlements.
+codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP_BUNDLE"
+
+# Fail the build if the signature is invalid.
+codesign --verify --strict --verbose=2 "$APP_BUNDLE"
+
+echo "Created and signed $APP_BUNDLE"
+echo "Run with: open $APP_BUNDLE"
