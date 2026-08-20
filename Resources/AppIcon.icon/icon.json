@@ -1,0 +1,46 @@
+{
+  "fill" : "automatic",
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "04_content.svg",
+          "name" : "04_content"
+        },
+        {
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "03_fold.svg",
+          "name" : "03_fold"
+        },
+        {
+          "glass" : true,
+          "image-name" : "02_front_page.svg",
+          "name" : "02_front_page"
+        },
+        {
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "01_back_page.svg",
+          "name" : "01_back_page"
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.3
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

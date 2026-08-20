@@ -17,7 +17,7 @@ permissions:
 jobs:
   macos:
     name: macOS 14+ arm64
-    runs-on: macos-26
+    runs-on: xcode-27
 
     steps:
       - name: Check out source
@@ -31,6 +31,7 @@ jobs:
           xcode-select -p
           xcodebuild -version
           swift --version
+          xcrun actool --version
 
       - name: Run unit tests
         run: |
@@ -52,7 +53,12 @@ jobs:
 
           test "$(lipo -archs MacDjView.app/Contents/MacOS/MacDjView)" = "arm64"
           test "$(plutil -extract LSMinimumSystemVersion raw MacDjView.app/Contents/Info.plist)" = "14.0"
+          test "$(plutil -extract CFBundleIconName raw MacDjView.app/Contents/Info.plist)" = "AppIcon"
+          test "$(plutil -extract CFBundleIconFile raw MacDjView.app/Contents/Info.plist)" = "AppIcon"
           test -f MacDjView.app/Contents/Resources/PrivacyInfo.xcprivacy
+          test -s MacDjView.app/Contents/Resources/Assets.car
+          test -s MacDjView.app/Contents/Resources/AppIcon.icns
+          file MacDjView.app/Contents/Resources/AppIcon.icns
 
           vtool -show-build MacDjView.app/Contents/MacOS/MacDjView | grep -Eq 'minos[[:space:]]+14\.0'
 
