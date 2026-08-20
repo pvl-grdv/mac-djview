@@ -8,9 +8,9 @@ let package = Package(
         .executableTarget(
             name: "MacDjView",
             path: "Sources/MacDjView",
-            resources: [
-                .process("Assets.xcassets"),
-                .copy("PrivacyInfo.xcprivacy")
+            exclude: [
+                "Assets.xcassets",
+                "PrivacyInfo.xcprivacy"
             ],
             linkerSettings: [
                 .unsafeFlags(["-Xlinker", "-dead_strip"])
