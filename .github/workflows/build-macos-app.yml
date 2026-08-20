@@ -2,6 +2,11 @@ name: Build and release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing tag to build and publish, for example v1.0
+        required: false
+        type: string
   pull_request:
     branches:
       - main
@@ -22,6 +27,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
 
       - name: Show toolchain
         run: |
@@ -39,12 +46,16 @@ jobs:
           swift test
 
       - name: Build arm64 app
+        env:
+          MANUAL_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
 
           VERSION="0.0.0"
           if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ -n "${MANUAL_RELEASE_TAG:-}" ]]; then
+            VERSION="${MANUAL_RELEASE_TAG#v}"
           fi
 
           MACDJVIEW_VERSION="$VERSION" \
@@ -107,6 +118,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
 
       - name: Show Xcode and iOS SDK
         run: |
@@ -131,7 +144,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs:
       - macos
       - ios-compatibility
@@ -149,19 +162,32 @@ jobs:
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MANUAL_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           ARCHIVE="release/MacDjView-macOS-arm64.app.zip"
           CHECKSUM="$ARCHIVE.sha256"
 
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" "$CHECKSUM" --clobber
+          TAG="$GITHUB_REF_NAME"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && -n "${MANUAL_RELEASE_TAG:-}" ]]; then
+            TAG="$MANUAL_RELEASE_TAG"
+          fi
+
+          if [[ "$TAG" != v* ]]; then
+            echo "Release tag must start with 'v': $TAG" >&2
+            exit 1
+          fi
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ARCHIVE" "$CHECKSUM" --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$GITHUB_REF_NAME" \
+            gh release create "$TAG" \
               "$ARCHIVE" \
               "$CHECKSUM" \
+              --repo "$GITHUB_REPOSITORY" \
               --verify-tag \
               --generate-notes \
               --notes $'### macOS compatibility\n\nApple Silicon (arm64), macOS 14 or later.\n\n### Gatekeeper\n\nThis personal build is ad-hoc signed with App Sandbox, but it is not Apple-notarized because notarization requires a paid Apple Developer Program membership. macOS may therefore show “Apple could not verify MacDjView.app is free of malware”. Verify the SHA-256 checksum and signature first; then use Finder → right-click the app → Open, or System Settings → Privacy & Security → Open Anyway.' \
-              --title "MacDjView $GITHUB_REF_NAME"
+              --title "MacDjView $TAG"
           fi
