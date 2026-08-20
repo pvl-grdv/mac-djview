@@ -14,10 +14,14 @@ struct DecoderSafetyTests {
         ]
     }
 
-    private func form(type: String = "DJVU", children: [UInt8] = []) -> [UInt8] {
+    private func form(
+        type: String = "DJVU",
+        children: [UInt8] = [],
+        includePadding: Bool = true
+    ) -> [UInt8] {
         let payloadLength = 4 + children.count
         var bytes = Array("FORM".utf8) + be32(payloadLength) + Array(type.utf8) + children
-        if payloadLength % 2 != 0 {
+        if includePadding && payloadLength % 2 != 0 {
             bytes.append(0)
         }
         return bytes
@@ -93,17 +97,37 @@ struct DecoderSafetyTests {
         }
     }
 
-    @Test("odd IFF leaf requires and accepts padding")
-    func oddLeafPadding() throws {
-        let padded = Data(Array("AT&T".utf8) + form(children: leaf(id: "TEST", payload: [1])))
-        let root = try IFFParser.parse(data: padded)
-        #expect(root.children.count == 1)
-        #expect(root.children[0].data == Data([1]))
+    @Test("terminal odd IFF chunk may end exactly at FORM and EOF")
+    func oddTerminalLeafWithoutPadding() throws {
+        let terminalChild = leaf(id: "TEST", payload: [1], includePadding: false)
+        let data = Data(
+            Array("AT&T".utf8)
+                + form(children: terminalChild, includePadding: false)
+        )
 
-        let unpaddedChild = leaf(id: "TEST", payload: [1], includePadding: false)
-        let malformed = Data(Array("AT&T".utf8) + form(children: unpaddedChild))
+        let root = try IFFParser.parse(data: data)
+        #expect(root.children.count == 1)
+        #expect(root.children[0].id == "TEST")
+        #expect(root.children[0].data == Data([1]))
+    }
+
+    @Test("odd IFF chunk before a sibling still needs alignment padding")
+    func oddLeafBeforeSiblingNeedsPadding() throws {
+        let second = leaf(id: "NEXT", payload: [2, 3])
+
+        let padded = Data(
+            Array("AT&T".utf8)
+                + form(children: leaf(id: "TEST", payload: [1]) + second)
+        )
+        let root = try IFFParser.parse(data: padded)
+        #expect(root.children.map(\.id) == ["TEST", "NEXT"])
+
+        let unpadded = Data(
+            Array("AT&T".utf8)
+                + form(children: leaf(id: "TEST", payload: [1], includePadding: false) + second)
+        )
         #expect(throws: DjVuError.self) {
-            try IFFParser.parse(data: malformed)
+            try IFFParser.parse(data: unpadded)
         }
     }
 

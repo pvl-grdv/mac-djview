@@ -93,12 +93,11 @@ final class IFFParser {
             chunk = IFFChunk(id: id, data: chunkData, children: [], formType: nil)
         }
 
-        // Every IFF chunk, including FORM, is padded to an even byte boundary.
-        // The pad byte is not part of the declared length but is part of the parent payload.
-        if rawLength % 2 != 0 {
-            guard stream.offset < limit else {
-                throw DjVuError.truncatedData
-            }
+        // Odd-sized IFF chunks are normally followed by one alignment byte when
+        // another byte exists inside the enclosing boundary. Real DjVu files also
+        // occur with a terminal odd-sized chunk ending exactly at FORM/EOF, so do
+        // not manufacture a truncation error when there is no byte left to skip.
+        if rawLength % 2 != 0 && stream.offset < limit {
             try stream.skip(1)
         }
 
