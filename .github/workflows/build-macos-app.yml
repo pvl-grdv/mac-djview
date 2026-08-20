@@ -1,0 +1,71 @@
+name: Build sandboxed macOS app
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - build/sandboxed-macos-artifact
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          set -euo pipefail
+          xcode-select -p
+          xcodebuild -version
+          swift --version
+
+      - name: Build universal signed app
+        run: |
+          set -euo pipefail
+          ./scripts/make-app-bundle.sh --arch arm64 --arch x86_64
+          file MacDjView.app/Contents/MacOS/MacDjView
+
+      - name: Verify sandbox entitlements
+        run: |
+          set -euo pipefail
+          ENTITLEMENTS="$(codesign -d --entitlements :- MacDjView.app 2>&1)"
+          printf '%s\n' "$ENTITLEMENTS"
+
+          grep -q '<key>com.apple.security.app-sandbox</key>' <<< "$ENTITLEMENTS"
+          grep -q '<key>com.apple.security.files.user-selected.read-only</key>' <<< "$ENTITLEMENTS"
+
+          if grep -q '<key>com.apple.security.network.client</key>' <<< "$ENTITLEMENTS"; then
+            echo 'Unexpected network client entitlement' >&2
+            exit 1
+          fi
+
+          if grep -q '<key>com.apple.security.network.server</key>' <<< "$ENTITLEMENTS"; then
+            echo 'Unexpected network server entitlement' >&2
+            exit 1
+          fi
+
+          codesign --verify --strict --verbose=2 MacDjView.app
+
+      - name: Create ZIP
+        run: |
+          set -euo pipefail
+          ditto -c -k --sequesterRsrc --keepParent MacDjView.app MacDjView.zip
+          shasum -a 256 MacDjView.zip | tee MacDjView.zip.sha256
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacDjView-macOS
+          path: |
+            MacDjView.zip
+            MacDjView.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
