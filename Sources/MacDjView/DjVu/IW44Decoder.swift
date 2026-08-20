@@ -6,17 +6,14 @@ private final class IW44ChannelDecoder {
     var blocks: [IW44Block] = []
     var curband: Int = 0
 
-    // Quantization state (mutable copies, independent per channel)
     var quantLo: [UInt32] = quant_lo
     var quantHi: [UInt32] = quant_hi
 
-    // ZP context arrays (per-channel, as in DjVu.js)
     var decodeBucketCtx: [UInt8] = [0]
     var decodeCoefCtx: [UInt8] = [UInt8](repeating: 0, count: 80)
     var activateCoefCtx: [UInt8] = [UInt8](repeating: 0, count: 16)
     var inreaseCoefCtx: [UInt8] = [0]
 
-    // Per-block temporary state
     var coeffstate: [[UInt8]] = Array(repeating: [UInt8](repeating: 0, count: 16), count: 16)
     var bucketstate: [UInt8] = [UInt8](repeating: 0, count: 16)
     var bbstate: UInt8 = 0
@@ -25,8 +22,6 @@ private final class IW44ChannelDecoder {
         blocks = (0..<count).map { _ in IW44Block() }
     }
 
-    /// Decode one slice from the ZP bitstream.
-    /// Corresponds to DjVu.js IWDecoder.decodeSlice()
     func decodeSlice(zp: ZPCodec) {
         if !isNullSlice() {
             let band = curband
@@ -226,14 +221,12 @@ private final class IW44ChannelDecoder {
 }
 
 /// IW44 progressive wavelet image decoder for DjVu BG44/FG44 chunks.
-/// Manages separate channel decoders for Y, Cb, Cr planes.
-/// Faithfully ported from DjVu.js IWImage.js
 final class IW44Decoder {
     private var width: Int = 0
     private var height: Int = 0
     private var isColor: Bool = false
     private var delayInit: Int = 0
-    private var cslice: Int = 0  // current slice counter (across all chunks)
+    private var cslice: Int = 0
 
     private var blocksPerRow: Int = 0
     private var blocksPerCol: Int = 0
@@ -252,13 +245,13 @@ final class IW44Decoder {
 
         if serial == 0 && !initialized {
             let majver = try stream.readUInt8()
-            let _ = try stream.readUInt8() // minver
+            _ = try stream.readUInt8() // minver
             let cols = Int(try stream.readUInt16())
             let rows = Int(try stream.readUInt16())
+            try DecodeLimits.validatePage(width: cols, height: rows, context: "IW44 image")
 
-            self.isColor = (majver & 0x80) == 0 // bit 7 clear = color, set = grayscale
+            self.isColor = (majver & 0x80) == 0
 
-            // Read delayInit byte (present in the header)
             let delayByte = try stream.readUInt8()
             self.delayInit = Int(delayByte & 0x7F)
 
@@ -267,7 +260,12 @@ final class IW44Decoder {
 
             blocksPerRow = (width + 31) / 32
             blocksPerCol = (height + 31) / 32
-            let numBlocks = blocksPerRow * blocksPerCol
+            let numBlocks = try DecodeLimits.checkedMultiply(
+                blocksPerRow, blocksPerCol, context: "IW44 block count"
+            )
+            guard numBlocks <= DecodeLimits.maxIW44Blocks else {
+                throw DjVuError.resourceLimitExceeded("IW44 image requires too many wavelet blocks")
+            }
 
             yCodec.initBlocks(count: numBlocks)
             if isColor {
@@ -282,6 +280,20 @@ final class IW44Decoder {
 
         guard initialized else {
             throw DjVuError.decodingFailed("IW44: non-zero serial without prior initialization")
+        }
+
+        let newSliceCount = try DecodeLimits.checkedAdd(
+            cslice, numSlices, context: "IW44 slice count"
+        )
+        guard newSliceCount <= DecodeLimits.maxIW44Slices else {
+            throw DjVuError.resourceLimitExceeded("IW44 contains too many progressive slices")
+        }
+
+        let blockSliceWork = try DecodeLimits.checkedMultiply(
+            yCodec.blocks.count, newSliceCount, context: "IW44 block-slice work"
+        )
+        guard blockSliceWork <= DecodeLimits.maxIW44BlockSlices else {
+            throw DjVuError.resourceLimitExceeded("IW44 decode requires too much block-slice work")
         }
 
         let zp = ZPCodec(stream: stream)

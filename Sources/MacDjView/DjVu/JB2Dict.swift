@@ -7,8 +7,6 @@ final class JB2Dict {
 
     init() {}
 
-    /// Decode a standalone dictionary (Djbz chunk).
-    /// Ported from DjVu.js JB2Dict.decode()
     static func decode(from data: Data) throws -> JB2Dict {
         let stream = ByteStream(data: data)
         let zp = ZPCodec(stream: stream)
@@ -28,56 +26,93 @@ final class JB2Dict {
         let commentLengthCtx = NumContext()
         let commentOctetCtx = NumContext()
 
-        // Step 1: Read initial record type (may be 9 for inherited dict)
+        var decodedBitmapPixels = 0
+        var decodedCommentBytes = 0
+        var recordCount = 0
+
+        func recordDecodedBitmap(_ bitmap: JB2Bitmap) throws {
+            let pixels = try DecodeLimits.checkedMultiply(
+                bitmap.width, bitmap.height, context: "JB2 dictionary decoded bitmap pixels"
+            )
+            decodedBitmapPixels = try DecodeLimits.checkedAdd(
+                decodedBitmapPixels, pixels, context: "JB2 dictionary decoded pixels"
+            )
+            guard decodedBitmapPixels <= DecodeLimits.maxJB2DecodedBitmapPixels else {
+                throw DjVuError.resourceLimitExceeded("JB2 dictionary decodes too many bitmap pixels")
+            }
+        }
+
+        func appendSymbol(_ bitmap: JB2Bitmap) throws {
+            guard dict.symbols.count < DecodeLimits.maxJB2Symbols else {
+                throw DjVuError.resourceLimitExceeded("JB2 dictionary contains too many symbols")
+            }
+            dict.symbols.append(bitmap)
+        }
+
         var type = zp.decodeNum(ctx: recordTypeCtx, low: 0, high: 11)
         if type == 9 {
-            // Inherited dict size — we don't support nested inheritance yet
-            let _ = zp.decodeNum(ctx: inheritDictSizeCtx, low: 0, high: 262142)
+            let inheritedCount = zp.decodeNum(ctx: inheritDictSizeCtx, low: 0, high: 262142)
+            guard inheritedCount <= DecodeLimits.maxJB2Symbols else {
+                throw DjVuError.resourceLimitExceeded("JB2 inherited dictionary is too large")
+            }
             type = zp.decodeNum(ctx: recordTypeCtx, low: 0, high: 11)
         }
 
-        // Step 2: Read image size
-        let _ = zp.decodeNum(ctx: imageSizeCtx, low: 0, high: 262142) // width
-        let _ = zp.decodeNum(ctx: imageSizeCtx, low: 0, high: 262142) // height
+        _ = zp.decodeNum(ctx: imageSizeCtx, low: 0, high: 262142)
+        _ = zp.decodeNum(ctx: imageSizeCtx, low: 0, high: 262142)
 
-        // Step 3: Read flag (raw ZP bit, NOT decodeNum)
         var flagCtx: [UInt8] = [0]
         let flag = zp.decode(ctx: &flagCtx, n: 0)
         if flag != 0 {
             throw DjVuError.decodingFailed("JB2Dict: bad flag")
         }
 
-        // Step 4: Decode records
         type = zp.decodeNum(ctx: recordTypeCtx, low: 0, high: 11)
 
         while type != 11 {
+            recordCount += 1
+            guard recordCount <= DecodeLimits.maxJB2Records else {
+                throw DjVuError.resourceLimitExceeded("JB2 dictionary contains too many records")
+            }
+
             switch type {
-            case 2: // New symbol - direct bitmap, add to library
+            case 2:
                 let w = zp.decodeNum(ctx: symbolWidthCtx, low: 0, high: 262142)
                 let h = zp.decodeNum(ctx: symbolHeightCtx, low: 0, high: 262142)
-                let bm = decodeBitmap(zp: zp, width: w, height: h, ctx: &directBitmapCtx)
-                dict.symbols.append(bm)
+                let bm = try decodeBitmap(zp: zp, width: w, height: h, ctx: &directBitmapCtx)
+                try recordDecodedBitmap(bm)
+                try appendSymbol(bm)
 
-            case 5: // Refinement bitmap, add to library
+            case 5:
                 let idx = zp.decodeNum(ctx: symbolIndexCtx, low: 0, high: max(0, dict.symbols.count - 1))
                 let wdiff = zp.decodeNum(ctx: symbolWidthDiffCtx, low: -262143, high: 262142)
                 let hdiff = zp.decodeNum(ctx: symbolHeightDiffCtx, low: -262143, high: 262142)
                 let model = idx < dict.symbols.count ? dict.symbols[idx] : JB2Bitmap(width: 1, height: 1)
-                let bm = decodeRefinementBitmap(zp: zp,
-                    width: model.width + wdiff, height: model.height + hdiff,
-                    model: model, ctx: &refinementBitmapCtx)
-                dict.symbols.append(bm.removeEmptyEdges())
+                let width = try DecodeLimits.checkedAdd(model.width, wdiff, context: "JB2 refinement width")
+                let height = try DecodeLimits.checkedAdd(model.height, hdiff, context: "JB2 refinement height")
+                let bm = try decodeRefinementBitmap(
+                    zp: zp, width: width, height: height,
+                    model: model, ctx: &refinementBitmapCtx
+                )
+                try recordDecodedBitmap(bm)
+                try appendSymbol(bm.removeEmptyEdges())
 
-            case 9: // Numcoder reset
+            case 9:
                 resetNumContexts(recordTypeCtx, imageSizeCtx, inheritDictSizeCtx,
                                  symbolWidthCtx, symbolHeightCtx, symbolIndexCtx,
                                  symbolWidthDiffCtx, symbolHeightDiffCtx,
                                  commentLengthCtx, commentOctetCtx)
 
-            case 10: // Comment
+            case 10:
                 let length = zp.decodeNum(ctx: commentLengthCtx, low: 0, high: 262142)
+                decodedCommentBytes = try DecodeLimits.checkedAdd(
+                    decodedCommentBytes, length, context: "JB2 dictionary comment bytes"
+                )
+                guard decodedCommentBytes <= DecodeLimits.maxJB2CommentBytes else {
+                    throw DjVuError.resourceLimitExceeded("JB2 dictionary comments are too large")
+                }
                 for _ in 0..<length {
-                    let _ = zp.decodeNum(ctx: commentOctetCtx, low: 0, high: 255)
+                    _ = zp.decodeNum(ctx: commentOctetCtx, low: 0, high: 255)
                 }
 
             default:
@@ -92,12 +127,10 @@ final class JB2Dict {
     }
 }
 
-// MARK: - Bitmap decoding helpers (shared between JB2Dict and JB2Decoder)
+func decodeBitmap(zp: ZPCodec, width: Int, height: Int, ctx: inout [UInt8]) throws -> JB2Bitmap {
+    let bm = try JB2Bitmap.validated(width: width, height: height)
+    guard width > 0, height > 0 else { return bm }
 
-/// Decode a direct bitmap using context-based ZP coding.
-/// Ported from DjVu.js JB2Codec.decodeBitmap()
-func decodeBitmap(zp: ZPCodec, width: Int, height: Int, ctx: inout [UInt8]) -> JB2Bitmap {
-    let bm = JB2Bitmap(width: width, height: height)
     for i in stride(from: height - 1, through: 0, by: -1) {
         for j in 0..<width {
             var index = 0
@@ -116,18 +149,14 @@ func decodeBitmap(zp: ZPCodec, width: Int, height: Int, ctx: inout [UInt8]) -> J
     return bm
 }
 
-/// Decode a refinement bitmap using a model bitmap.
-/// Ported from DjVu.js JB2Codec.decodeBitmapRef() + getCtxIndexRef()
 func decodeRefinementBitmap(zp: ZPCodec, width: Int, height: Int,
-                            model: JB2Bitmap, ctx: inout [UInt8]) -> JB2Bitmap {
-    // Match JavaScript behavior: if width or height <= 0, the for loops
-    // don't execute, so no ZP bits are consumed. Return empty bitmap.
-    guard width > 0 && height > 0 else {
-        return JB2Bitmap(width: max(width, 0), height: max(height, 0))
+                            model: JB2Bitmap, ctx: inout [UInt8]) throws -> JB2Bitmap {
+    if width <= 0 || height <= 0 {
+        return try JB2Bitmap.validated(width: max(width, 0), height: max(height, 0))
     }
-    let cbm = JB2Bitmap(width: width, height: height)
 
-    // Alignment: match DjVu.js alignBitmaps()
+    let cbm = try JB2Bitmap.validated(width: width, height: height)
+
     let crow = (height - 1) >> 1
     let ccol = (width - 1) >> 1
     let mrow = (model.height - 1) >> 1
@@ -139,14 +168,12 @@ func decodeRefinementBitmap(zp: ZPCodec, width: Int, height: Int,
         for j in 0..<width {
             var index = 0
 
-            // Current bitmap context
             let r1 = i + 1
             if cbm.hasRow(r1) {
                 index = cbm.getBits(r1, j - 1, 3) << 8
             }
             index |= cbm.get(i, j - 1) << 7
 
-            // Model bitmap context
             var mr = i + rowshift + 1
             let mc = j + colshift
             index |= (model.hasRow(mr) ? model.get(mr, mc) : 0) << 6

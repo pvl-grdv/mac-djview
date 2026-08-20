@@ -1,4 +1,6 @@
+import Foundation
 import SwiftUI
+import CryptoKit
 
 enum PageLayout: String, CaseIterable {
     case single = "Single Page"
@@ -45,12 +47,8 @@ final class DocumentViewModel {
 
     private var renderTask: Task<Void, Never>?
 
-    // MARK: - Computed
-
     var hasDocument: Bool { document != nil }
-
     var pageCount: Int { document?.pageCount ?? 0 }
-
     var canGoBack: Bool { currentPage > 0 }
 
     var canGoForward: Bool {
@@ -71,8 +69,6 @@ final class DocumentViewModel {
         guard document != nil else { return "" }
         return pageIndicatorText
     }
-
-    // MARK: - Navigation
 
     func navigatePage(_ delta: Int) {
         guard let document else { return }
@@ -114,8 +110,6 @@ final class DocumentViewModel {
         }
     }
 
-    /// Returns the start page of the spread containing `page`.
-    /// Spread layout: [0], [1,2], [3,4], ... (page 0 is shown alone as a cover).
     func spreadStartPage(for page: Int) -> Int {
         if page <= 0 { return 0 }
         return page % 2 == 0 ? page - 1 : page
@@ -127,8 +121,6 @@ final class DocumentViewModel {
         colorTheme = all[(idx + 1) % all.count]
         saveDocumentState()
     }
-
-    // MARK: - Zoom
 
     func adjustZoom(_ delta: Double) {
         zoom = max(0.25, min(4.0, zoom + delta))
@@ -155,8 +147,6 @@ final class DocumentViewModel {
         }
     }
 
-    // MARK: - Layout/Mode changes
-
     func handlePageLayoutChanged() {
         guard document != nil else { return }
         saveDocumentState()
@@ -180,8 +170,6 @@ final class DocumentViewModel {
         }
     }
 
-    // MARK: - Document Loading
-
     func loadDocument(url: URL) {
         isLoading = true
         errorMessage = nil
@@ -194,13 +182,20 @@ final class DocumentViewModel {
         renderTask?.cancel()
         renderTask = Task {
             do {
-                let data = try Data(contentsOf: url)
+                let hasSecurityScope = url.startAccessingSecurityScopedResource()
+                defer {
+                    if hasSecurityScope {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+
+                let data = try SafeFileLoader.read(url: url)
                 let doc = try DjVuDocument(data: data)
                 await MainActor.run {
                     self.document = doc
                     if let saved = self.restoreDocumentState() {
                         self.currentPage = min(max(saved.currentPage, 0), doc.pageCount - 1)
-                        self.zoom = saved.zoom
+                        self.zoom = saved.zoom.isFinite ? max(0.25, min(4.0, saved.zoom)) : 1.0
                         if let layout = PageLayout(rawValue: saved.pageLayout) {
                             self.pageLayout = layout
                         }
@@ -230,8 +225,6 @@ final class DocumentViewModel {
         }
     }
 
-    // MARK: - Rendering
-
     func renderCurrentPage() {
         guard let document else { return }
 
@@ -245,7 +238,6 @@ final class DocumentViewModel {
             return pageIndex + 1
         }()
 
-        // Check cache for left page
         if let cached = pageCache.image(forPage: pageIndex, zoom: zoomPercent) {
             self.pageImage = cached
 
@@ -267,7 +259,6 @@ final class DocumentViewModel {
         renderTask?.cancel()
         renderTask = Task {
             do {
-                // Render left page
                 let leftImage: PlatformImage
                 if let cached = pageCache.image(forPage: pageIndex, zoom: zoomPercent) {
                     leftImage = cached
@@ -279,7 +270,6 @@ final class DocumentViewModel {
                     pageCache.store(leftImage, forPage: pageIndex, zoom: zoomPercent)
                 }
 
-                // Render right page if needed
                 let renderedRight: PlatformImage?
                 if let ri = rightIndex {
                     if let cached = pageCache.image(forPage: ri, zoom: zoomPercent) {
@@ -312,7 +302,12 @@ final class DocumentViewModel {
         }
     }
 
-    // MARK: - State Persistence
+    private func documentStateKey(for url: URL) -> String {
+        let pathData = Data(url.standardizedFileURL.path.utf8)
+        let digest = SHA256.hash(data: pathData)
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return "docState:\(hex)"
+    }
 
     func saveDocumentState() {
         guard document != nil, let documentURL else { return }
@@ -324,20 +319,18 @@ final class DocumentViewModel {
             colorTheme: colorTheme.rawValue
         )
         guard let data = try? JSONEncoder().encode(state) else { return }
-        UserDefaults.standard.set(data, forKey: "docState:\(documentURL.path)")
+        UserDefaults.standard.set(data, forKey: documentStateKey(for: documentURL))
     }
 
     private func restoreDocumentState() -> DocumentState? {
         guard let documentURL,
-              let data = UserDefaults.standard.data(forKey: "docState:\(documentURL.path)")
+              let data = UserDefaults.standard.data(forKey: documentStateKey(for: documentURL))
         else { return nil }
         return try? JSONDecoder().decode(DocumentState.self, from: data)
     }
 }
 
 #if os(macOS)
-// MARK: - FocusedValues
-
 struct DocumentActions {
     var navigatePage: (Int) -> Void
     var goToFirstPage: () -> Void

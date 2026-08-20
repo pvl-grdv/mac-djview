@@ -20,12 +20,10 @@ final class DjVuPage {
     }
 
     func render(scale: Double) throws -> CGImage {
-        // Collect chunks by type
         var bg44Chunks: [Data] = []
         var fg44Chunks: [Data] = []
         var sjbzData: Data?
         var fgbzData: Data?
-        var inclChunks: [String] = []
 
         for child in chunk.children {
             switch child.id {
@@ -37,16 +35,11 @@ final class DjVuPage {
                 sjbzData = child.data
             case "FGbz":
                 fgbzData = child.data
-            case "INCL":
-                if let name = String(data: child.data, encoding: .ascii) {
-                    inclChunks.append(name.trimmingCharacters(in: .controlCharacters))
-                }
             default:
                 break
             }
         }
 
-        // Decode background (IW44)
         var bgImage: IW44Image?
         if !bg44Chunks.isEmpty {
             let decoder = IW44Decoder()
@@ -56,7 +49,6 @@ final class DjVuPage {
             bgImage = try decoder.getImage()
         }
 
-        // Decode foreground color (IW44)
         var fgImage: IW44Image?
         if !fg44Chunks.isEmpty {
             let decoder = IW44Decoder()
@@ -66,19 +58,16 @@ final class DjVuPage {
             fgImage = try decoder.getImage()
         }
 
-        // Decode mask (JB2)
         var maskImage: JB2Image?
         if let sjbzData {
             maskImage = try JB2Decoder.decode(data: sjbzData, sharedDict: sharedDict)
         }
 
-        // Decode foreground colors palette
         var fgbzPalette: FGbzPalette?
         if let fgbzData {
             fgbzPalette = try FGbzPalette.decode(from: fgbzData)
         }
 
-        // Compose layers
         return try PageCompositor.compose(
             width: width,
             height: height,
@@ -106,6 +95,7 @@ struct FGbzPalette {
 
         let numColors = Int(try stream.readUInt16())
         var colors: [(r: UInt8, g: UInt8, b: UInt8)] = []
+        colors.reserveCapacity(numColors)
         for _ in 0..<numColors {
             let b = try stream.readUInt8()
             let g = try stream.readUInt8()
@@ -118,6 +108,11 @@ struct FGbzPalette {
             let zp = ZPCodec(stream: stream)
             let numBlitsCtx = NumContext()
             let numBlits = zp.decodeNum(ctx: numBlitsCtx, low: 0, high: 0xFFFFFF)
+            guard numBlits <= DecodeLimits.maxJB2Blits else {
+                throw DjVuError.resourceLimitExceeded("FGbz contains too many blit color indices")
+            }
+            blitColors.reserveCapacity(numBlits)
+
             let colorCtx = NumContext()
             for _ in 0..<numBlits {
                 let colorIdx = zp.decodeNum(ctx: colorCtx, low: 0, high: max(0, numColors - 1))

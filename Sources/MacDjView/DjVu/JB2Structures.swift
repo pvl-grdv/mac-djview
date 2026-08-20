@@ -13,24 +13,25 @@ final class JB2Bitmap {
         self.data = [UInt8](repeating: 0, count: length)
     }
 
+    static func validated(width: Int, height: Int) throws -> JB2Bitmap {
+        _ = try DecodeLimits.validateJB2Bitmap(width: width, height: height)
+        return JB2Bitmap(width: width, height: height)
+    }
+
     func hasRow(_ r: Int) -> Bool { r >= 0 && r < height }
 
-    /// Get pixel at (row, col). Returns 0 or 1.
     func get(_ row: Int, _ col: Int) -> Int {
         guard row >= 0, row < height, col >= 0, col < width else { return 0 }
         let idx = row * width + col
         return Int((data[idx >> 3] >> (7 - (idx & 7))) & 1)
     }
 
-    /// Set pixel at (row, col) to 1
     func set(_ row: Int, _ col: Int) {
         guard row >= 0, row < height, col >= 0, col < width else { return }
         let idx = row * width + col
         data[idx >> 3] |= (0x80 >> (idx & 7))
     }
 
-    /// Get n consecutive bits starting at (row, col), packed into an integer.
-    /// Bit at (row, col) goes into position (bitCount-1), bit at (row, col+bitCount-1) into position 0.
     func getBits(_ row: Int, _ col: Int, _ bitCount: Int) -> Int {
         guard row >= 0, row < height else { return 0 }
         var result = 0
@@ -44,74 +45,53 @@ final class JB2Bitmap {
         return result
     }
 
-    /// Remove empty rows and columns from all edges.
-    /// Ported from DjVu.js Bitmap.removeEmptyEdges()
+    /// Remove empty rows and columns with one bounding-box scan, then one copy pass.
     func removeEmptyEdges() -> JB2Bitmap {
-        var bottomShift = 0
-        var topShift = 0
-        var leftShift = 0
-        var rightShift = 0
-
-        // Bottom empty rows (row 0 is bottom in DjVu convention)
-        bottomLoop: for i in 0..<height {
-            for j in 0..<width {
-                if get(i, j) != 0 { break bottomLoop }
-            }
-            bottomShift += 1
+        guard width > 0, height > 0 else {
+            return JB2Bitmap(width: 1, height: 1)
         }
 
-        // Top empty rows
-        topLoop: for i in stride(from: height - 1, through: 0, by: -1) {
-            for j in 0..<width {
-                if get(i, j) != 0 { break topLoop }
+        var minRow = height
+        var maxRow = -1
+        var minCol = width
+        var maxCol = -1
+
+        for row in 0..<height {
+            for col in 0..<width where get(row, col) != 0 {
+                minRow = min(minRow, row)
+                maxRow = max(maxRow, row)
+                minCol = min(minCol, col)
+                maxCol = max(maxCol, col)
             }
-            topShift += 1
         }
 
-        // Left empty columns
-        leftLoop: for j in 0..<width {
-            for i in 0..<height {
-                if get(i, j) != 0 { break leftLoop }
-            }
-            leftShift += 1
+        guard maxRow >= minRow, maxCol >= minCol else {
+            return JB2Bitmap(width: 1, height: 1)
         }
 
-        // Right empty columns
-        rightLoop: for j in stride(from: width - 1, through: 0, by: -1) {
-            for i in 0..<height {
-                if get(i, j) != 0 { break rightLoop }
-            }
-            rightShift += 1
+        if minRow == 0, maxRow == height - 1, minCol == 0, maxCol == width - 1 {
+            return self
         }
 
-        if topShift > 0 || bottomShift > 0 || leftShift > 0 || rightShift > 0 {
-            let newWidth = width - leftShift - rightShift
-            let newHeight = height - topShift - bottomShift
-            if newWidth <= 0 || newHeight <= 0 {
-                return JB2Bitmap(width: 1, height: 1)
+        let newWidth = maxCol - minCol + 1
+        let newHeight = maxRow - minRow + 1
+        let newBitmap = JB2Bitmap(width: newWidth, height: newHeight)
+
+        for row in minRow...maxRow {
+            for col in minCol...maxCol where get(row, col) != 0 {
+                newBitmap.set(row - minRow, col - minCol)
             }
-            let newBm = JB2Bitmap(width: newWidth, height: newHeight)
-            for p in 0..<newHeight {
-                for q in 0..<newWidth {
-                    if get(p + bottomShift, q + leftShift) != 0 {
-                        newBm.set(p, q)
-                    }
-                }
-            }
-            return newBm
         }
-        return self
+        return newBitmap
     }
 }
 
-/// Blit record: a bitmap placed at (x, y) on the page
 struct JB2Blit {
     let bitmap: JB2Bitmap
     let x: Int
     let y: Int
 }
 
-/// Baseline: median-of-3 filter for stable vertical positioning
 final class Baseline {
     private var arr: [Int] = [0, 0, 0]
     private var index: Int = -1

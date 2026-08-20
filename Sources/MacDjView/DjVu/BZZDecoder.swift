@@ -190,16 +190,34 @@ final class BZZDecoder {
         return size
     }
 
-    /// Decode BZZ-compressed data into a ByteStream
-    static func decode(stream: ByteStream) -> ByteStream {
+    /// Decode BZZ-compressed data into a ByteStream with a global output/work cap.
+    static func decode(stream: ByteStream) throws -> ByteStream {
         let zp = ZPCodec(stream: stream)
         let decoder = BZZDecoder(zp: zp)
         var result = Data()
+        var blockCount = 0
+
         while true {
+            blockCount += 1
+            guard blockCount <= 1_000_000 else {
+                throw DjVuError.resourceLimitExceeded("BZZ contains too many blocks")
+            }
+
             let size = decoder.decodeBlock()
             guard size > 0, let blockData = decoder.data else { break }
-            // DATA[0...size-2] contains the decoded bytes
-            result.append(contentsOf: blockData[0..<(size - 1)])
+
+            let payloadSize = size - 1
+            let newSize = try DecodeLimits.checkedAdd(
+                result.count, payloadSize, context: "BZZ output size"
+            )
+            guard newSize <= DecodeLimits.maxBZZOutputBytes else {
+                throw DjVuError.resourceLimitExceeded("BZZ output is too large")
+            }
+
+            // DATA[0...size-2] contains the decoded bytes.
+            if payloadSize > 0 {
+                result.append(contentsOf: blockData[0..<payloadSize])
+            }
         }
         return ByteStream(data: result)
     }

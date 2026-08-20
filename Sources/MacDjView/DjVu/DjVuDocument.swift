@@ -23,6 +23,10 @@ final class DjVuDocument: @unchecked Sendable {
     var sharedDictCount: Int { sharedDictsByID.count + sharedDicts.count }
 
     init(data: Data) throws {
+        guard data.count <= DecodeLimits.maxFileBytes else {
+            throw DjVuError.resourceLimitExceeded("DjVu file is larger than the supported limit")
+        }
+
         self.data = data
         self.rootChunk = try IFFParser.parse(data: data)
 
@@ -49,6 +53,9 @@ final class DjVuDocument: @unchecked Sendable {
                 dirmChunk = child
             } else if child.isForm && (child.formType == "DJVU" || child.formType == "DJVI") {
                 allFormChildren.append(child)
+                guard allFormChildren.count <= DecodeLimits.maxDocumentComponents else {
+                    throw DjVuError.resourceLimitExceeded("document contains too many components")
+                }
             }
         }
 
@@ -96,6 +103,10 @@ final class DjVuDocument: @unchecked Sendable {
             }
         }
 
+        guard pageChunks.count <= DecodeLimits.maxDocumentComponents else {
+            throw DjVuError.resourceLimitExceeded("document contains too many pages")
+        }
+
         // Parse page info for each page
         for pageChunk in pageChunks {
             let info = try parsePageInfo(from: pageChunk)
@@ -114,38 +125,47 @@ final class DjVuDocument: @unchecked Sendable {
         let isBundled = (dflags >> 7) != 0
         let nfiles = Int(try stream.readUInt16())
 
-        // Skip offsets array for bundled documents
-        if isBundled {
-            stream.skip(nfiles * 4) // Int32 per file
+        guard nfiles <= DecodeLimits.maxDocumentComponents else {
+            throw DjVuError.resourceLimitExceeded("DIRM declares too many components")
         }
 
-        // Decode BZZ-compressed body
-        let bzzStream = BZZDecoder.decode(stream: stream.fork())
+        // Skip offsets array for bundled documents.
+        if isBundled {
+            let offsetBytes = try DecodeLimits.checkedMultiply(
+                nfiles, 4, context: "DIRM offsets array"
+            )
+            try stream.skip(offsetBytes)
+        }
+
+        // Decode BZZ-compressed body.
+        let bzzStream = try BZZDecoder.decode(stream: try stream.fork())
 
         // Read sizes (3 bytes each)
         for _ in 0..<nfiles {
-            let _ = try bzzStream.readUInt24()
+            _ = try bzzStream.readUInt24()
         }
 
         // Read flags (1 byte each)
         var flags = [UInt8]()
+        flags.reserveCapacity(nfiles)
         for _ in 0..<nfiles {
             flags.append(try bzzStream.readUInt8())
         }
 
         // Read IDs (null-terminated strings)
         var ids = [String]()
+        ids.reserveCapacity(nfiles)
         for i in 0..<nfiles {
             guard !bzzStream.isEmpty else { break }
             let id = bzzStream.readStrNT()
             ids.append(id)
             // Skip name if hasname flag set
             if flags[i] & 128 != 0 {
-                let _ = bzzStream.readStrNT()
+                _ = bzzStream.readStrNT()
             }
             // Skip title if hastitle flag set
             if flags[i] & 64 != 0 {
-                let _ = bzzStream.readStrNT()
+                _ = bzzStream.readStrNT()
             }
         }
 
@@ -162,21 +182,23 @@ final class DjVuDocument: @unchecked Sendable {
         for chunk in formChunk.children {
             if chunk.id == "INFO" {
                 let stream = ByteStream(data: chunk.data)
-                let width = try stream.readUInt16()
-                let height = try stream.readUInt16()
+                let width = Int(try stream.readUInt16())
+                let height = Int(try stream.readUInt16())
+                try DecodeLimits.validatePage(width: width, height: height)
+
                 let minorVersion = try stream.readUInt8()
                 let majorVersion = try stream.readUInt8()
                 let dpiLo = try stream.readUInt8()
                 let dpiHi = try stream.readUInt8()
                 let dpiRaw = Int(dpiHi) << 8 | Int(dpiLo)
                 let dpi = dpiRaw == 0 ? 300 : dpiRaw
-                let _ = try stream.readUInt8() // gamma
+                _ = try stream.readUInt8() // gamma
                 let flags = stream.remaining > 0 ? (try stream.readUInt8()) : 0
                 let rotation = Int(flags & 0x07)
 
                 return PageInfo(
-                    width: Int(width),
-                    height: Int(height),
+                    width: width,
+                    height: height,
                     dpi: dpi,
                     rotation: rotation,
                     version: Int(majorVersion) * 100 + Int(minorVersion)

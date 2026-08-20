@@ -7,6 +7,7 @@ enum DjVuError: LocalizedError {
     case truncatedData
     case invalidPageIndex(Int)
     case decodingFailed(String)
+    case resourceLimitExceeded(String)
     case noImageData
 
     var errorDescription: String? {
@@ -17,6 +18,7 @@ enum DjVuError: LocalizedError {
         case .truncatedData: return "Unexpected end of data"
         case .invalidPageIndex(let i): return "Invalid page index: \(i)"
         case .decodingFailed(let msg): return "Decoding failed: \(msg)"
+        case .resourceLimitExceeded(let msg): return "Safety limit exceeded: \(msg)"
         case .noImageData: return "No image data found"
         }
     }
