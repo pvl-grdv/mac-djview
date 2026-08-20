@@ -3,12 +3,13 @@ import PackageDescription
 
 let package = Package(
     name: "MacDjView",
-    platforms: [.macOS(.v14), .iOS(.v17)],
+    platforms: [.macOS("26.0")],
     targets: [
         .executableTarget(
             name: "MacDjView",
             path: "Sources/MacDjView",
             resources: [
+                .process("Assets.xcassets"),
                 .copy("PrivacyInfo.xcprivacy")
             ],
             linkerSettings: [
