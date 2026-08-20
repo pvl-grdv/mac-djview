@@ -1,1 +1,5 @@
 .build/
+.DS_Store
+MacDjView.app/
+/example.djvu
+/large.djvu
