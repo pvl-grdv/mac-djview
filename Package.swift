@@ -9,7 +9,6 @@ let package = Package(
             name: "MacDjView",
             path: "Sources/MacDjView",
             resources: [
-                .process("Assets.xcassets"),
                 .copy("PrivacyInfo.xcprivacy")
             ],
             linkerSettings: [
