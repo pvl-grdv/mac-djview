@@ -34,6 +34,7 @@ enum DecodeLimits {
     static let maxTextZonesPerPage = 100_000
     static let maxTextZoneDepth = 32
     static let maxDocumentTextBytes = 64 * 1024 * 1024
+    static let maxSearchResults = 20_000
 
     static func checkedAdd(_ lhs: Int, _ rhs: Int, context: String) throws -> Int {
         let (value, overflow) = lhs.addingReportingOverflow(rhs)

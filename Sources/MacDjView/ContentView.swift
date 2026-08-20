@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @State private var viewModel = DocumentViewModel()
     @State private var viewportSize: CGSize = .zero
+    @State private var isSearchPresented = false
     #if !os(macOS)
     @State private var showSettings = false
     #endif
@@ -19,6 +20,15 @@ struct ContentView: View {
             .navigationSubtitle(viewModel.navigationSubtitleText)
             #endif
             .toolbar { toolbarContent }
+            .searchable(
+                text: searchTextBinding,
+                isPresented: $isSearchPresented,
+                placement: .toolbar,
+                prompt: "Search Document"
+            )
+            .onSubmit(of: .search) {
+                viewModel.nextSearchMatch()
+            }
             .safeAreaInset(edge: .bottom) { statusBar }
             .fileImporter(
                 isPresented: $viewModel.showFileImporter,
@@ -107,7 +117,9 @@ struct ContentView: View {
                         scrollTarget: Binding(
                             get: { viewModel.scrollTarget },
                             set: { viewModel.scrollTarget = $0 }
-                        )
+                        ),
+                        highlightedPageIndex: viewModel.selectedSearchMatch?.pageIndex,
+                        highlightRects: viewModel.selectedSearchMatch?.rects ?? []
                     )
                 } else if viewModel.scrollMode == .continuous {
                     ContinuousPageView(
@@ -122,7 +134,9 @@ struct ContentView: View {
                         scrollTarget: Binding(
                             get: { viewModel.scrollTarget },
                             set: { viewModel.scrollTarget = $0 }
-                        )
+                        ),
+                        highlightedPageIndex: viewModel.selectedSearchMatch?.pageIndex,
+                        highlightRects: viewModel.selectedSearchMatch?.rects ?? []
                     )
                 } else if viewModel.pageLayout == .twoPage {
                     if viewModel.isLoading {
@@ -135,11 +149,18 @@ struct ContentView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else if let pageImage = viewModel.pageImage {
+                        let leftIndex = viewModel.currentPage
+                        let rightIndex = leftIndex > 0 && leftIndex + 1 < viewModel.pageCount
+                            ? leftIndex + 1 : nil
                         TwoPageView(
                             leftImage: pageImage,
                             rightImage: viewModel.rightPageImage,
                             zoom: viewModel.zoom,
-                            colorTheme: viewModel.colorTheme
+                            colorTheme: viewModel.colorTheme,
+                            leftNativePageSize: nativePageSize(at: leftIndex),
+                            rightNativePageSize: rightIndex.flatMap { nativePageSize(at: $0) },
+                            leftHighlightRects: viewModel.highlightRects(for: leftIndex),
+                            rightHighlightRects: rightIndex.map { viewModel.highlightRects(for: $0) } ?? []
                         )
                     }
                 } else {
@@ -153,7 +174,13 @@ struct ContentView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else if let pageImage = viewModel.pageImage {
-                        PageImageView(image: pageImage, zoom: viewModel.zoom, colorTheme: viewModel.colorTheme)
+                        PageImageView(
+                            image: pageImage,
+                            zoom: viewModel.zoom,
+                            colorTheme: viewModel.colorTheme,
+                            nativePageSize: nativePageSize(at: viewModel.currentPage),
+                            highlightRects: viewModel.highlightRects(for: viewModel.currentPage)
+                        )
                     }
                 }
             }
@@ -240,6 +267,24 @@ struct ContentView: View {
         #endif
 
         ToolbarItemGroup(placement: .automatic) {
+            if !viewModel.searchResultText.isEmpty {
+                Text(viewModel.searchResultText)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+
+                Button { viewModel.previousSearchMatch() } label: {
+                    Image(systemName: "chevron.up")
+                }
+                .disabled(!viewModel.canNavigateSearchResults)
+                .help("Previous Search Result")
+
+                Button { viewModel.nextSearchMatch() } label: {
+                    Image(systemName: "chevron.down")
+                }
+                .disabled(!viewModel.canNavigateSearchResults)
+                .help("Next Search Result")
+            }
+
             #if !os(macOS)
             Menu {
                 Picker("Layout", selection: Binding(
@@ -318,6 +363,13 @@ struct ContentView: View {
     private var statusBar: some View {
         if let document = viewModel.document {
             HStack {
+                if let searchError = viewModel.searchErrorMessage {
+                    Text(searchError)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
                 Spacer()
                 let page = document.pages[viewModel.currentPage]
                 if viewModel.pageLayout == .twoPage, viewModel.currentPage > 0,
@@ -340,8 +392,22 @@ struct ContentView: View {
 
     // MARK: - Helpers
 
+    private var searchTextBinding: Binding<String> {
+        Binding(
+            get: { viewModel.searchQuery },
+            set: { viewModel.setSearchQuery($0) }
+        )
+    }
+
     private var djvuContentTypes: [UTType] {
-        [UTType(filenameExtension: "djvu"), UTType(filenameExtension: "djv")].compactMap { $0 }
+        [.djvu]
+    }
+
+    private func nativePageSize(at index: Int) -> CGSize? {
+        guard let document = viewModel.document,
+              document.pages.indices.contains(index) else { return nil }
+        let page = document.pages[index]
+        return CGSize(width: page.width, height: page.height)
     }
 
     #if os(macOS)
@@ -353,9 +419,13 @@ struct ContentView: View {
             adjustZoom: { viewModel.adjustZoom($0) },
             zoomToActualSize: { viewModel.zoomToActualSize() },
             fitToHeight: { viewModel.fitToHeight(viewportHeight: viewportSize.height) },
+            presentSearch: { isSearchPresented = true },
+            nextSearchMatch: { viewModel.nextSearchMatch() },
+            previousSearchMatch: { viewModel.previousSearchMatch() },
             canGoBack: viewModel.canGoBack,
             canGoForward: viewModel.canGoForward,
             hasDocument: viewModel.hasDocument,
+            canNavigateSearchResults: viewModel.canNavigateSearchResults,
             colorTheme: Binding(
                 get: { viewModel.colorTheme },
                 set: { viewModel.colorTheme = $0 }
