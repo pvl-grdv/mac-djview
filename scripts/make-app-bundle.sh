@@ -1,21 +1,49 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-echo "Building MacDjView..."
-swift build -c release
+ENTITLEMENTS="MacDjView.entitlements"
+PRIVACY_MANIFEST="Sources/MacDjView/PrivacyInfo.xcprivacy"
+APP_BUNDLE="MacDjView.app"
+APP_DIR="$APP_BUNDLE/Contents"
+VERSION="${MACDJVIEW_VERSION:-1.0.0}"
+VERSION="${VERSION#v}"
+BUILD_NUMBER="${MACDJVIEW_BUILD_NUMBER:-1}"
 
-APP_DIR="MacDjView.app/Contents"
+if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
+    echo "Invalid app version '$VERSION'. Expected e.g. 1.0 or 1.0.0." >&2
+    exit 1
+fi
+
+if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+    echo "Invalid build number '$BUILD_NUMBER'. Expected an integer." >&2
+    exit 1
+fi
+
+if [[ ! -f "$ENTITLEMENTS" ]]; then
+    echo "Missing entitlements file: $ENTITLEMENTS" >&2
+    exit 1
+fi
+
+if [[ ! -f "$PRIVACY_MANIFEST" ]]; then
+    echo "Missing privacy manifest: $PRIVACY_MANIFEST" >&2
+    exit 1
+fi
+
+echo "Building MacDjView $VERSION for arm64 / macOS 14+..."
+swift build -c release --arch arm64 "$@"
+BIN_DIR="$(swift build -c release --arch arm64 --show-bin-path "$@")"
+
+rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_DIR/MacOS"
 mkdir -p "$APP_DIR/Resources"
 
-# Copy binary and strip debug symbols (saves ~50% of binary size)
-cp .build/release/MacDjView "$APP_DIR/MacOS/"
+cp "$BIN_DIR/MacDjView" "$APP_DIR/MacOS/MacDjView"
 strip "$APP_DIR/MacOS/MacDjView"
+cp "$PRIVACY_MANIFEST" "$APP_DIR/Resources/PrivacyInfo.xcprivacy"
 
-# Write Info.plist
-cat > "$APP_DIR/Info.plist" << 'PLIST'
+cat > "$APP_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -31,17 +59,17 @@ cat > "$APP_DIR/Info.plist" << 'PLIST'
     <key>CFBundleDisplayName</key>
     <string>MacDjView</string>
     <key>CFBundleVersion</key>
-    <string>1.0</string>
+    <string>$BUILD_NUMBER</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>$VERSION</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
-    <key>CFBundleSignature</key>
-    <string>????</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
@@ -64,5 +92,24 @@ cat > "$APP_DIR/Info.plist" << 'PLIST'
 </plist>
 PLIST
 
-echo "Created MacDjView.app"
-echo "Run with: open MacDjView.app"
+plutil -lint "$APP_DIR/Info.plist"
+
+# Ad-hoc signing is sufficient for local/testing builds and preserves the
+# restrictive App Sandbox entitlements. Internet-downloaded builds will not
+# pass Gatekeeper notarization checks without a paid Developer ID identity.
+codesign --force --sign - --options runtime --entitlements "$ENTITLEMENTS" "$APP_BUNDLE"
+codesign --verify --strict --verbose=2 "$APP_BUNDLE"
+
+ARCHS="$(lipo -archs "$APP_DIR/MacOS/MacDjView")"
+if [[ "$ARCHS" != "arm64" ]]; then
+    echo "Unexpected architectures: $ARCHS" >&2
+    exit 1
+fi
+
+if ! vtool -show-build "$APP_DIR/MacOS/MacDjView" | grep -Eq 'minos[[:space:]]+14\.0'; then
+    echo "Binary does not declare macOS 14.0 as its minimum OS." >&2
+    vtool -show-build "$APP_DIR/MacOS/MacDjView" >&2
+    exit 1
+fi
+
+echo "Created and signed $APP_BUNDLE ($ARCHS, macOS 14+)"

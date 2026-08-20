@@ -14,10 +14,12 @@ A native macOS/iOS DjVu document viewer written entirely in Swift — no externa
 
 ## Requirements
 
-- macOS 14 (Sonoma) or later
+- macOS 14 (Sonoma) or later on Apple Silicon (arm64)
 - iOS 17 / iPadOS 17 or later
 - Swift 5.10+
-- Xcode 15+ or standalone Swift toolchain
+- Full Xcode is required to build the SwiftUI application
+
+The deployment targets are based on the APIs currently used by the app. CI may build with newer Xcode/SDK versions (including the iOS 27 SDK) without raising the minimum supported OS.
 
 ## Building
 
@@ -37,7 +39,34 @@ swift run MacDjView
 
 You can also open the project in Xcode — just open `Package.swift`.
 
-For iOS/iPadOS, open `Package.swift` in Xcode, select an iPad or iPhone simulator target, and build.
+For iOS/iPadOS, open `Package.swift` in Xcode, select an iPad or iPhone target, and build. CI verifies a physical-device arm64 build with an iOS/iPadOS 17 deployment target against the iOS 27 SDK. Creating an installable build for a physical device requires Apple development signing/provisioning.
+
+## macOS Releases and Gatekeeper
+
+GitHub Releases contain an Apple Silicon `MacDjView-macOS-arm64.app.zip` plus a SHA-256 checksum file. The app is ad-hoc signed with App Sandbox and read-only access to user-selected files, but it is **not Apple-notarized** because Developer ID notarization requires a paid Apple Developer Program membership.
+
+Because of that, macOS can show:
+
+> Apple could not verify “MacDjView.app” is free of malware that may harm your Mac or compromise your privacy.
+
+Before overriding Gatekeeper, verify the downloaded archive and the app signature:
+
+```bash
+shasum -a 256 -c MacDjView-macOS-arm64.app.zip.sha256
+unzip MacDjView-macOS-arm64.app.zip
+codesign --verify --strict --verbose=2 MacDjView.app
+codesign -dvvv --entitlements :- MacDjView.app
+```
+
+The entitlements should include `com.apple.security.app-sandbox` and `com.apple.security.files.user-selected.read-only`, and should not include network client/server entitlements.
+
+After verification, use **Finder → right-click MacDjView.app → Open**. If macOS still blocks it, use **System Settings → Privacy & Security → Open Anyway**. For a copy you have verified yourself, the command-line equivalent is:
+
+```bash
+xattr -dr com.apple.quarantine MacDjView.app
+```
+
+Do not remove quarantine from an app you have not verified.
 
 ## Unit Tests
 
@@ -97,7 +126,7 @@ Key metrics to watch: **p95 render time** and **peak memory**.
    - [Git conventions](./docs/git-conventions.md)
 3. Run unit tests: `make unit-test`
 4. Visual test: `.build/debug/MacDjView --test <your-file>.djvu`
-4. Submit a pull request
+5. Submit a pull request
 
 ### Key guidelines
 
