@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MacDjView
 
-@Suite("ByteStream — UnsafeBufferPointer-backed reads")
+@Suite("ByteStream — bounds-checked reads")
 struct ByteStreamTests {
 
     @Test("readUInt8 returns correct bytes")
@@ -43,10 +43,20 @@ struct ByteStreamTests {
     @Test("seek and skip move offset correctly")
     func seekAndSkip() throws {
         let stream = ByteStream(data: Data([10, 20, 30, 40, 50]))
-        stream.skip(2)
+        try stream.skip(2)
         #expect(try stream.readUInt8() == 30)
-        stream.seek(to: 0)
+        try stream.seek(to: 0)
         #expect(try stream.readUInt8() == 10)
+    }
+
+    @Test("seek and skip reject invalid offsets")
+    func invalidNavigationThrows() throws {
+        let stream = ByteStream(data: Data([1, 2, 3]))
+        #expect(throws: DjVuError.self) { try stream.seek(to: -1) }
+        #expect(throws: DjVuError.self) { try stream.seek(to: 4) }
+        #expect(throws: DjVuError.self) { try stream.skip(-1) }
+        #expect(throws: DjVuError.self) { try stream.skip(Int.max) }
+        #expect(stream.offset == 0)
     }
 
     @Test("remaining and isAtEnd track position")
@@ -75,6 +85,7 @@ struct ByteStreamTests {
         let stream = ByteStream(data: Data([0x01, 0x02]))
         #expect(stream[0] == 0x01)
         #expect(stream[1] == 0x02)
+        #expect(stream[-1] == 0xFF)
         #expect(stream[2] == 0xFF)
         #expect(stream[999] == 0xFF)
     }
@@ -86,10 +97,18 @@ struct ByteStreamTests {
         #expect(try stream.readString(3) == "Hi!")
     }
 
+    @Test("negative read lengths are rejected")
+    func negativeLengthThrows() {
+        let stream = ByteStream(data: Data([1, 2, 3]))
+        #expect(throws: DjVuError.self) { try stream.readData(-1) }
+        #expect(throws: DjVuError.self) { try stream.readString(-1) }
+        #expect(throws: DjVuError.self) { try stream.substream(length: -1) }
+    }
+
     @Test("readData returns correct slice")
     func readData() throws {
         let stream = ByteStream(data: Data([1, 2, 3, 4, 5]))
-        stream.skip(1)
+        try stream.skip(1)
         let sub = try stream.readData(3)
         #expect([UInt8](sub) == [2, 3, 4])
         #expect(stream.remaining == 1)
@@ -98,7 +117,7 @@ struct ByteStreamTests {
     @Test("substream creates independent stream with correct data")
     func substream() throws {
         let stream = ByteStream(data: Data([10, 20, 30, 40, 50]))
-        stream.skip(1)
+        try stream.skip(1)
         let sub = try stream.substream(length: 3)
         #expect(try sub.readUInt8() == 20)
         #expect(try sub.readUInt8() == 30)
@@ -112,10 +131,18 @@ struct ByteStreamTests {
         let stream = ByteStream(data: Data([1, 2, 3, 4]))
         _ = try stream.readUInt8()
         _ = try stream.readUInt8()
-        let forked = stream.fork()
+        let forked = try stream.fork()
         #expect(try forked.readUInt8() == 3)
         #expect(try forked.readUInt8() == 4)
         #expect(forked.isAtEnd)
+    }
+
+    @Test("fork at end returns an empty stream")
+    func forkAtEnd() throws {
+        let stream = ByteStream(data: Data([1]))
+        _ = try stream.readUInt8()
+        let forked = try stream.fork()
+        #expect(forked.isEmpty)
     }
 
     @Test("readStrNT reads null-terminated string")
@@ -142,5 +169,13 @@ struct ByteStreamTests {
         let stream = ByteStream(data: Data([10, 20, 30]), offset: 1)
         #expect(try stream.readUInt8() == 20)
         #expect(stream.remaining == 1)
+    }
+
+    @Test("init clamps invalid offset parameter")
+    func initClampsOffset() {
+        let negative = ByteStream(data: Data([1, 2, 3]), offset: -100)
+        #expect(negative.offset == 0)
+        let pastEnd = ByteStream(data: Data([1, 2, 3]), offset: 100)
+        #expect(pastEnd.offset == 3)
     }
 }

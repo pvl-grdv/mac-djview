@@ -32,6 +32,11 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - name: Run unit tests
+        run: |
+          set -euo pipefail
+          swift test
+
       - name: Build arm64 app
         run: |
           set -euo pipefail

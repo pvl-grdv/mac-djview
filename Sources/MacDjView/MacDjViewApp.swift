@@ -42,8 +42,6 @@ struct MacDjViewApp: App {
         #endif
     }
 
-    // MARK: - File Menu
-
     #if os(macOS)
     @CommandsBuilder
     private var fileCommands: some Commands {
@@ -54,8 +52,6 @@ struct MacDjViewApp: App {
             .keyboardShortcut("o", modifiers: .command)
         }
     }
-
-    // MARK: - View Menu
 
     @CommandsBuilder
     private var viewCommands: some Commands {
@@ -121,8 +117,6 @@ struct MacDjViewApp: App {
         }
     }
 
-    // MARK: - Go Menu
-
     @CommandsBuilder
     private var goCommands: some Commands {
         CommandMenu("Go") {
@@ -168,8 +162,6 @@ struct MacDjViewApp: App {
         }
     }
 
-    // MARK: - CLI Test
-
     private static func log(_ msg: String) {
         FileHandle.standardError.write(Data((msg + "\n").utf8))
     }
@@ -196,11 +188,12 @@ struct MacDjViewApp: App {
         }
         do {
             let url = URL(fileURLWithPath: path)
-            let data = try Data(contentsOf: url)
+            let data = try SafeFileLoader.read(url: url)
             log("Loaded \(data.count) bytes")
             let doc = try DjVuDocument(data: data)
             let pageCount = doc.pageCount
-            log("Document: \(path) — \(pageCount) pages, \(doc.sharedDictCount) shared dicts, starting at \(startPage)")
+            let safeStartPage = min(max(startPage, 0), max(0, pageCount - 1))
+            log("Document: \(path) — \(pageCount) pages, \(doc.sharedDictCount) shared dicts, starting at \(safeStartPage)")
 
             let totalStart = DispatchTime.now()
             let baseMemory = currentMemoryMB()
@@ -208,10 +201,10 @@ struct MacDjViewApp: App {
             var pageTimes = [Double]()
             var errorCount = 0
 
-            for i in startPage..<pageCount {
+            for i in safeStartPage..<pageCount {
                 do {
                     let startTime = DispatchTime.now()
-                    let _ = try doc.renderPage(at: i, scale: 0.25)
+                    _ = try doc.renderPage(at: i, scale: 0.25)
                     let elapsed = Double(DispatchTime.now().uptimeNanoseconds - startTime.uptimeNanoseconds) / 1_000_000
                     pageTimes.append(elapsed)
                     let mem = currentMemoryMB()
@@ -228,13 +221,14 @@ struct MacDjViewApp: App {
 
             log("")
             log("=== Performance Summary ===")
-            log("Pages rendered: \(pageTimes.count)/\(pageCount - startPage) (\(errorCount) errors)")
+            log("Pages rendered: \(pageTimes.count)/\(pageCount - safeStartPage) (\(errorCount) errors)")
             log("Total time: \(String(format: "%.0f", totalElapsed))ms")
             if !pageTimes.isEmpty {
                 let avg = pageTimes.reduce(0, +) / Double(pageTimes.count)
                 let sorted = pageTimes.sorted()
                 let median = sorted[sorted.count / 2]
-                let p95 = sorted[Int(Double(sorted.count) * 0.95)]
+                let p95Index = min(sorted.count - 1, Int(Double(sorted.count) * 0.95))
+                let p95 = sorted[p95Index]
                 let maxTime = sorted.last!
                 log("Per-page: avg=\(Int(avg))ms median=\(Int(median))ms p95=\(Int(p95))ms max=\(Int(maxTime))ms")
             }

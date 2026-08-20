@@ -8,7 +8,6 @@ final class JB2Decoder {
         let stream = ByteStream(data: data)
         let zp = ZPCodec(stream: stream)
 
-        // Context arrays
         var directBitmapCtx = [UInt8](repeating: 0, count: 1024)
         var refinementBitmapCtx = [UInt8](repeating: 0, count: 2048)
         var offsetTypeCtx: [UInt8] = [0]
@@ -21,30 +20,71 @@ final class JB2Decoder {
         let symbolIndexCtx = NumContext()
         let symbolWidthDiffCtx = NumContext()
         let symbolHeightDiffCtx = NumContext()
-        let hoffCtx = NumContext()     // new-line horizontal offset
-        let voffCtx = NumContext()     // new-line vertical offset
-        let shoffCtx = NumContext()    // same-line horizontal offset
-        let svoffCtx = NumContext()    // same-line vertical offset
+        let hoffCtx = NumContext()
+        let voffCtx = NumContext()
+        let shoffCtx = NumContext()
+        let svoffCtx = NumContext()
         let commentLengthCtx = NumContext()
         let commentOctetCtx = NumContext()
         let horizontalAbsLocationCtx = NumContext()
         let verticalAbsLocationCtx = NumContext()
 
-        // Step 1: Read initial record type (may be 9 for inherited dict)
+        var decodedBitmapPixels = 0
+        var decodedCommentBytes = 0
+        var cumulativeBlitPixels = 0
+        var recordCount = 0
+
+        func recordDecodedBitmap(_ bitmap: JB2Bitmap) throws {
+            let pixels = try DecodeLimits.checkedMultiply(
+                bitmap.width, bitmap.height, context: "JB2 decoded bitmap pixels"
+            )
+            decodedBitmapPixels = try DecodeLimits.checkedAdd(
+                decodedBitmapPixels, pixels, context: "JB2 cumulative decoded pixels"
+            )
+            guard decodedBitmapPixels <= DecodeLimits.maxJB2DecodedBitmapPixels else {
+                throw DjVuError.resourceLimitExceeded("JB2 decodes too many bitmap pixels")
+            }
+        }
+
+        func appendLibrary(_ bitmap: JB2Bitmap, to library: inout [JB2Bitmap]) throws {
+            guard library.count < DecodeLimits.maxJB2Symbols else {
+                throw DjVuError.resourceLimitExceeded("JB2 contains too many symbols")
+            }
+            library.append(bitmap)
+        }
+
+        func addBlit(_ bitmap: JB2Bitmap, x: Int, y: Int, to image: JB2Image) throws {
+            guard image.blits.count < DecodeLimits.maxJB2Blits else {
+                throw DjVuError.resourceLimitExceeded("JB2 contains too many blits")
+            }
+            let pixels = try DecodeLimits.checkedMultiply(
+                bitmap.width, bitmap.height, context: "JB2 blit pixel work"
+            )
+            cumulativeBlitPixels = try DecodeLimits.checkedAdd(
+                cumulativeBlitPixels, pixels, context: "JB2 cumulative blit pixel work"
+            )
+            guard cumulativeBlitPixels <= DecodeLimits.maxJB2BlitPixels else {
+                throw DjVuError.resourceLimitExceeded("JB2 blits require too much pixel work")
+            }
+            image.addBlit(JB2Blit(bitmap: bitmap, x: x, y: y))
+        }
+
         var initialDictLength = 0
         var type = zp.decodeNum(ctx: recordTypeCtx, low: 0, high: 11)
         if type == 9 {
             initialDictLength = zp.decodeNum(ctx: inheritDictSizeCtx, low: 0, high: 262142)
+            guard initialDictLength <= DecodeLimits.maxJB2Symbols else {
+                throw DjVuError.resourceLimitExceeded("JB2 inherited dictionary is too large")
+            }
             type = zp.decodeNum(ctx: recordTypeCtx, low: 0, high: 11)
         }
 
-        // Step 2: Read image size
         let imgWidth = zp.decodeNum(ctx: imageSizeCtx, low: 0, high: 262142)
         let imgHeight = zp.decodeNum(ctx: imageSizeCtx, low: 0, high: 262142)
         let w = imgWidth > 0 ? imgWidth : 200
         let h = imgHeight > 0 ? imgHeight : 200
+        try DecodeLimits.validatePage(width: w, height: h, context: "JB2 image")
 
-        // Step 3: Read flag (raw ZP bit, NOT decodeNum)
         var flagCtx: [UInt8] = [0]
         let flag = zp.decode(ctx: &flagCtx, n: 0)
         if flag != 0 {
@@ -53,28 +93,34 @@ final class JB2Decoder {
 
         let image = JB2Image(width: w, height: h)
 
-        // Build library from shared dict
         var library: [JB2Bitmap] = []
         if initialDictLength > 0, let sharedDict {
             library = Array(sharedDict.symbols.prefix(initialDictLength))
         }
+        guard library.count <= DecodeLimits.maxJB2Symbols else {
+            throw DjVuError.resourceLimitExceeded("JB2 inherited symbol library is too large")
+        }
 
-        // Coordinate tracking (matching DjVu.js JB2Image.init())
         var lastRight = 0
-        var firstLeft = -1       // DjVu.js initializes to -1
-        var firstBottom = h - 1  // DjVu.js: this.height - 1
+        var firstLeft = -1
+        var firstBottom = h - 1
         let baseline = Baseline()
         baseline.fill(0)
 
-        // Step 4: Decode records
         type = zp.decodeNum(ctx: recordTypeCtx, low: 0, high: 11)
 
         while type != 11 {
+            recordCount += 1
+            guard recordCount <= DecodeLimits.maxJB2Records else {
+                throw DjVuError.resourceLimitExceeded("JB2 contains too many records")
+            }
+
             switch type {
-            case 1: // New symbol - add to image AND library (direct bitmap)
+            case 1:
                 let bw = zp.decodeNum(ctx: symbolWidthCtx, low: 0, high: 262142)
                 let bh = zp.decodeNum(ctx: symbolHeightCtx, low: 0, high: 262142)
-                let bm = decodeBitmap(zp: zp, width: bw, height: bh, ctx: &directBitmapCtx)
+                let bm = try decodeBitmap(zp: zp, width: bw, height: bh, ctx: &directBitmapCtx)
+                try recordDecodedBitmap(bm)
                 let (x, y) = decodeSymbolCoords(
                     zp: zp, bmWidth: bm.width, bmHeight: bm.height,
                     offsetTypeCtx: &offsetTypeCtx,
@@ -84,19 +130,21 @@ final class JB2Decoder {
                     lastRight: &lastRight,
                     firstLeft: &firstLeft, firstBottom: &firstBottom,
                     imgHeight: h)
-                image.addBlit(JB2Blit(bitmap: bm, x: x, y: y))
-                library.append(bm.removeEmptyEdges())
+                try addBlit(bm, x: x, y: y, to: image)
+                try appendLibrary(bm.removeEmptyEdges(), to: &library)
 
-            case 2: // New symbol - library only
+            case 2:
                 let bw = zp.decodeNum(ctx: symbolWidthCtx, low: 0, high: 262142)
                 let bh = zp.decodeNum(ctx: symbolHeightCtx, low: 0, high: 262142)
-                let bm = decodeBitmap(zp: zp, width: bw, height: bh, ctx: &directBitmapCtx)
-                library.append(bm.removeEmptyEdges())
+                let bm = try decodeBitmap(zp: zp, width: bw, height: bh, ctx: &directBitmapCtx)
+                try recordDecodedBitmap(bm)
+                try appendLibrary(bm.removeEmptyEdges(), to: &library)
 
-            case 3: // New symbol - image only
+            case 3:
                 let bw = zp.decodeNum(ctx: symbolWidthCtx, low: 0, high: 262142)
                 let bh = zp.decodeNum(ctx: symbolHeightCtx, low: 0, high: 262142)
-                let bm = decodeBitmap(zp: zp, width: bw, height: bh, ctx: &directBitmapCtx)
+                let bm = try decodeBitmap(zp: zp, width: bw, height: bh, ctx: &directBitmapCtx)
+                try recordDecodedBitmap(bm)
                 let (x, y) = decodeSymbolCoords(
                     zp: zp, bmWidth: bm.width, bmHeight: bm.height,
                     offsetTypeCtx: &offsetTypeCtx,
@@ -106,58 +154,37 @@ final class JB2Decoder {
                     lastRight: &lastRight,
                     firstLeft: &firstLeft, firstBottom: &firstBottom,
                     imgHeight: h)
-                image.addBlit(JB2Blit(bitmap: bm, x: x, y: y))
+                try addBlit(bm, x: x, y: y, to: image)
 
-            case 4: // Refinement - add to image AND library
+            case 4, 5, 6:
                 let idx = zp.decodeNum(ctx: symbolIndexCtx, low: 0, high: max(0, library.count - 1))
                 let wdiff = zp.decodeNum(ctx: symbolWidthDiffCtx, low: -262143, high: 262142)
                 let hdiff = zp.decodeNum(ctx: symbolHeightDiffCtx, low: -262143, high: 262142)
                 let model = idx < library.count ? library[idx] : JB2Bitmap(width: 1, height: 1)
-                let bm = decodeRefinementBitmap(zp: zp,
-                    width: model.width + wdiff, height: model.height + hdiff,
+                let refinedWidth = try DecodeLimits.checkedAdd(model.width, wdiff, context: "JB2 refinement width")
+                let refinedHeight = try DecodeLimits.checkedAdd(model.height, hdiff, context: "JB2 refinement height")
+                let bm = try decodeRefinementBitmap(
+                    zp: zp, width: refinedWidth, height: refinedHeight,
                     model: model, ctx: &refinementBitmapCtx)
-                let (x, y) = decodeSymbolCoords(
-                    zp: zp, bmWidth: bm.width, bmHeight: bm.height,
-                    offsetTypeCtx: &offsetTypeCtx,
-                    hoffCtx: hoffCtx, voffCtx: voffCtx,
-                    shoffCtx: shoffCtx, svoffCtx: svoffCtx,
-                    baseline: baseline,
-                    lastRight: &lastRight,
-                    firstLeft: &firstLeft, firstBottom: &firstBottom,
-                    imgHeight: h)
-                image.addBlit(JB2Blit(bitmap: bm, x: x, y: y))
-                library.append(bm.removeEmptyEdges())
+                try recordDecodedBitmap(bm)
 
-            case 5: // Refinement - library only
-                let idx = zp.decodeNum(ctx: symbolIndexCtx, low: 0, high: max(0, library.count - 1))
-                let wdiff = zp.decodeNum(ctx: symbolWidthDiffCtx, low: -262143, high: 262142)
-                let hdiff = zp.decodeNum(ctx: symbolHeightDiffCtx, low: -262143, high: 262142)
-                let model = idx < library.count ? library[idx] : JB2Bitmap(width: 1, height: 1)
-                let bm = decodeRefinementBitmap(zp: zp,
-                    width: model.width + wdiff, height: model.height + hdiff,
-                    model: model, ctx: &refinementBitmapCtx)
-                library.append(bm.removeEmptyEdges())
+                if type == 4 || type == 6 {
+                    let (x, y) = decodeSymbolCoords(
+                        zp: zp, bmWidth: bm.width, bmHeight: bm.height,
+                        offsetTypeCtx: &offsetTypeCtx,
+                        hoffCtx: hoffCtx, voffCtx: voffCtx,
+                        shoffCtx: shoffCtx, svoffCtx: svoffCtx,
+                        baseline: baseline,
+                        lastRight: &lastRight,
+                        firstLeft: &firstLeft, firstBottom: &firstBottom,
+                        imgHeight: h)
+                    try addBlit(bm, x: x, y: y, to: image)
+                }
+                if type == 4 || type == 5 {
+                    try appendLibrary(bm.removeEmptyEdges(), to: &library)
+                }
 
-            case 6: // Refinement - image only
-                let idx = zp.decodeNum(ctx: symbolIndexCtx, low: 0, high: max(0, library.count - 1))
-                let wdiff = zp.decodeNum(ctx: symbolWidthDiffCtx, low: -262143, high: 262142)
-                let hdiff = zp.decodeNum(ctx: symbolHeightDiffCtx, low: -262143, high: 262142)
-                let model = idx < library.count ? library[idx] : JB2Bitmap(width: 1, height: 1)
-                let bm = decodeRefinementBitmap(zp: zp,
-                    width: model.width + wdiff, height: model.height + hdiff,
-                    model: model, ctx: &refinementBitmapCtx)
-                let (x, y) = decodeSymbolCoords(
-                    zp: zp, bmWidth: bm.width, bmHeight: bm.height,
-                    offsetTypeCtx: &offsetTypeCtx,
-                    hoffCtx: hoffCtx, voffCtx: voffCtx,
-                    shoffCtx: shoffCtx, svoffCtx: svoffCtx,
-                    baseline: baseline,
-                    lastRight: &lastRight,
-                    firstLeft: &firstLeft, firstBottom: &firstBottom,
-                    imgHeight: h)
-                image.addBlit(JB2Blit(bitmap: bm, x: x, y: y))
-
-            case 7: // Matched symbol copy (no refinement)
+            case 7:
                 let idx = zp.decodeNum(ctx: symbolIndexCtx, low: 0, high: max(0, library.count - 1))
                 let bm = idx < library.count ? library[idx] : JB2Bitmap(width: 1, height: 1)
                 let (x, y) = decodeSymbolCoords(
@@ -169,17 +196,18 @@ final class JB2Decoder {
                     lastRight: &lastRight,
                     firstLeft: &firstLeft, firstBottom: &firstBottom,
                     imgHeight: h)
-                image.addBlit(JB2Blit(bitmap: bm, x: x, y: y))
+                try addBlit(bm, x: x, y: y, to: image)
 
-            case 8: // Non-symbol data (direct bitmap with absolute coordinates)
+            case 8:
                 let bw = zp.decodeNum(ctx: symbolWidthCtx, low: 0, high: 262142)
                 let bh = zp.decodeNum(ctx: symbolHeightCtx, low: 0, high: 262142)
-                let bm = decodeBitmap(zp: zp, width: bw, height: bh, ctx: &directBitmapCtx)
+                let bm = try decodeBitmap(zp: zp, width: bw, height: bh, ctx: &directBitmapCtx)
+                try recordDecodedBitmap(bm)
                 let left = zp.decodeNum(ctx: horizontalAbsLocationCtx, low: 1, high: w)
                 let top = zp.decodeNum(ctx: verticalAbsLocationCtx, low: 1, high: h)
-                image.addBlit(JB2Blit(bitmap: bm, x: left, y: top - bh))
+                try addBlit(bm, x: left, y: top - bh, to: image)
 
-            case 9: // Numcoder reset
+            case 9:
                 resetNumContexts(recordTypeCtx, imageSizeCtx, inheritDictSizeCtx,
                                  symbolWidthCtx, symbolHeightCtx, symbolIndexCtx,
                                  symbolWidthDiffCtx, symbolHeightDiffCtx,
@@ -187,10 +215,16 @@ final class JB2Decoder {
                                  commentLengthCtx, commentOctetCtx,
                                  horizontalAbsLocationCtx, verticalAbsLocationCtx)
 
-            case 10: // Comment
+            case 10:
                 let length = zp.decodeNum(ctx: commentLengthCtx, low: 0, high: 262142)
+                decodedCommentBytes = try DecodeLimits.checkedAdd(
+                    decodedCommentBytes, length, context: "JB2 comment bytes"
+                )
+                guard decodedCommentBytes <= DecodeLimits.maxJB2CommentBytes else {
+                    throw DjVuError.resourceLimitExceeded("JB2 comments are too large")
+                }
                 for _ in 0..<length {
-                    let _ = zp.decodeNum(ctx: commentOctetCtx, low: 0, high: 255)
+                    _ = zp.decodeNum(ctx: commentOctetCtx, low: 0, high: 255)
                 }
 
             default:
@@ -204,8 +238,6 @@ final class JB2Decoder {
         return image
     }
 
-    /// Decode symbol coordinates.
-    /// Ported from DjVu.js JB2Image.decodeSymbolCoords()
     private static func decodeSymbolCoords(
         zp: ZPCodec,
         bmWidth: Int, bmHeight: Int,
@@ -222,7 +254,6 @@ final class JB2Decoder {
         var y: Int
 
         if isNewLine {
-            // New line: use hoffCtx/voffCtx
             let hoff = zp.decodeNum(ctx: hoffCtx, low: -262143, high: 262142)
             let voff = zp.decodeNum(ctx: voffCtx, low: -262143, high: 262142)
             x = firstLeft + hoff
@@ -231,7 +262,6 @@ final class JB2Decoder {
             firstBottom = y
             baseline.fill(y)
         } else {
-            // Same line: use shoffCtx/svoffCtx
             let hoff = zp.decodeNum(ctx: shoffCtx, low: -262143, high: 262142)
             let voff = zp.decodeNum(ctx: svoffCtx, low: -262143, high: 262142)
             x = lastRight + hoff
@@ -239,7 +269,7 @@ final class JB2Decoder {
         }
 
         baseline.add(y)
-        lastRight = x + bmWidth - 1  // DjVu.js: this.lastRight = x + width - 1
+        lastRight = x + bmWidth - 1
         return (x, y)
     }
 }

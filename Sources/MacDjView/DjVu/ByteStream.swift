@@ -14,29 +14,36 @@ final class ByteStream {
     init(data: Data, offset: Int) {
         self.data = data
         self.bytes = [UInt8](data)
-        self.offset = offset
+        self.offset = min(max(offset, 0), self.bytes.count)
     }
 
-    var remaining: Int { bytes.count - offset }
+    var remaining: Int { max(0, bytes.count - offset) }
     var isAtEnd: Bool { offset >= bytes.count }
 
-    func seek(to position: Int) {
-        self.offset = position
+    func seek(to position: Int) throws {
+        guard position >= 0, position <= bytes.count else {
+            throw DjVuError.truncatedData
+        }
+        offset = position
     }
 
-    func skip(_ count: Int) {
-        offset += count
+    func skip(_ count: Int) throws {
+        let (newOffset, overflow) = offset.addingReportingOverflow(count)
+        guard !overflow, newOffset >= 0, newOffset <= bytes.count else {
+            throw DjVuError.truncatedData
+        }
+        offset = newOffset
     }
 
     func readUInt8() throws -> UInt8 {
-        guard offset < bytes.count else { throw DjVuError.truncatedData }
+        guard remaining >= 1 else { throw DjVuError.truncatedData }
         let value = bytes[offset]
         offset += 1
         return value
     }
 
     func readUInt16() throws -> UInt16 {
-        guard offset + 2 <= bytes.count else { throw DjVuError.truncatedData }
+        guard remaining >= 2 else { throw DjVuError.truncatedData }
         let b0 = UInt16(bytes[offset])
         let b1 = UInt16(bytes[offset + 1])
         offset += 2
@@ -44,7 +51,7 @@ final class ByteStream {
     }
 
     func readUInt24() throws -> UInt32 {
-        guard offset + 3 <= bytes.count else { throw DjVuError.truncatedData }
+        guard remaining >= 3 else { throw DjVuError.truncatedData }
         let b0 = UInt32(bytes[offset])
         let b1 = UInt32(bytes[offset + 1])
         let b2 = UInt32(bytes[offset + 2])
@@ -53,7 +60,7 @@ final class ByteStream {
     }
 
     func readUInt32() throws -> UInt32 {
-        guard offset + 4 <= bytes.count else { throw DjVuError.truncatedData }
+        guard remaining >= 4 else { throw DjVuError.truncatedData }
         let b0 = UInt32(bytes[offset])
         let b1 = UInt32(bytes[offset + 1])
         let b2 = UInt32(bytes[offset + 2])
@@ -63,46 +70,51 @@ final class ByteStream {
     }
 
     func readString(_ count: Int) throws -> String {
-        guard offset + count <= bytes.count else { throw DjVuError.truncatedData }
-        let slice = bytes[offset..<(offset + count)]
-        offset += count
+        guard count >= 0, count <= remaining else { throw DjVuError.truncatedData }
+        let end = offset + count
+        let slice = bytes[offset..<end]
+        offset = end
         return String(bytes: slice, encoding: .ascii) ?? ""
     }
 
     func readData(_ count: Int) throws -> Data {
-        guard offset + count <= bytes.count else { throw DjVuError.truncatedData }
-        let result = Data(bytes[offset..<(offset + count)])
-        offset += count
+        guard count >= 0, count <= remaining else { throw DjVuError.truncatedData }
+        let end = offset + count
+        let result = Data(bytes[offset..<end])
+        offset = end
         return result
     }
 
     func substream(length: Int) throws -> ByteStream {
-        guard offset + length <= bytes.count else { throw DjVuError.truncatedData }
-        let sub = ByteStream(data: Data(bytes[offset..<(offset + length)]))
-        offset += length
+        guard length >= 0, length <= remaining else { throw DjVuError.truncatedData }
+        let end = offset + length
+        let sub = ByteStream(data: Data(bytes[offset..<end]))
+        offset = end
         return sub
     }
 
-    // Read a byte without advancing
+    // Read a byte without advancing.
     func peek() throws -> UInt8 {
-        guard offset < bytes.count else { throw DjVuError.truncatedData }
+        guard remaining >= 1 else { throw DjVuError.truncatedData }
         return bytes[offset]
     }
 
-    // For ZP-Coder: read bytes as needed
+    // For ZP-Coder: out-of-range bytes use DjVu's conventional 0xFF padding.
     subscript(index: Int) -> UInt8 {
-        if index < bytes.count {
-            return bytes[index]
+        guard index >= 0, index < bytes.count else { return 0xFF }
+        return bytes[index]
+    }
+
+    /// Create a new stream from the remaining data (DjVu.js fork()).
+    func fork() throws -> ByteStream {
+        guard offset >= 0, offset <= bytes.count else { throw DjVuError.truncatedData }
+        if offset == bytes.count {
+            return ByteStream(data: Data())
         }
-        return 0xFF
+        return ByteStream(data: Data(bytes[offset..<bytes.count]))
     }
 
-    /// Create a new stream from the remaining data (DjVu.js fork())
-    func fork() -> ByteStream {
-        return ByteStream(data: Data(bytes[offset...]))
-    }
-
-    /// Read a null-terminated string
+    /// Read a null-terminated string. Missing terminator consumes the remainder.
     func readStrNT() -> String {
         var result: [UInt8] = []
         while offset < bytes.count {

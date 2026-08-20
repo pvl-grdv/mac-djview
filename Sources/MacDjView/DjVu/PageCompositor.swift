@@ -12,8 +12,19 @@ enum PageCompositor {
         fgPalette: FGbzPalette?,
         scale: Double
     ) throws -> CGImage {
+        try DecodeLimits.validatePage(width: width, height: height)
+        guard scale.isFinite, scale > 0, scale <= 4.0 else {
+            throw DjVuError.resourceLimitExceeded("render scale is outside the supported range")
+        }
+
         let scaledW = max(1, Int(Double(width) * scale))
         let scaledH = max(1, Int(Double(height) * scale))
+        let renderedPixels = try DecodeLimits.checkedMultiply(
+            scaledW, scaledH, context: "rendered pixel count"
+        )
+        guard renderedPixels <= DecodeLimits.maxRenderedPixels else {
+            throw DjVuError.resourceLimitExceeded("rendered page is too large")
+        }
 
         // Get background pixels (already flipped to top-down by IW44Image.getPixels())
         var bgPixels: [UInt8]?
@@ -40,10 +51,16 @@ enum PageCompositor {
         }
 
         // Pre-render foreground palette colors into a buffer (DjVu bottom-up coords)
-        // so we do O(1) lookup per pixel instead of scanning all blits
+        // so we do O(1) lookup per pixel instead of scanning all blits.
         var fgColorBuf: [UInt8]?
         if let fgPalette, let mask {
-            var buf = [UInt8](repeating: 0, count: width * height * 3)
+            let pagePixels = try DecodeLimits.checkedMultiply(
+                width, height, context: "foreground palette pixel count"
+            )
+            let bufferBytes = try DecodeLimits.checkedMultiply(
+                pagePixels, 3, context: "foreground palette buffer size"
+            )
+            var buf = [UInt8](repeating: 0, count: bufferBytes)
             for (blitIdx, blit) in mask.blits.enumerated() {
                 guard blitIdx < fgPalette.blitColors.count else { continue }
                 let colorIdx = fgPalette.blitColors[blitIdx]
@@ -65,10 +82,14 @@ enum PageCompositor {
             fgColorBuf = buf
         }
 
+        let bytesPerRow = try DecodeLimits.checkedMultiply(
+            scaledW, 4, context: "graphics context row size"
+        )
+
         // Create CGContext and write pixels directly (avoids separate output buffer + copy)
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
               let ctx = CGContext(data: nil, width: scaledW, height: scaledH,
-                                  bitsPerComponent: 8, bytesPerRow: scaledW * 4,
+                                  bitsPerComponent: 8, bytesPerRow: bytesPerRow,
                                   space: colorSpace,
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
               let data = ctx.data else {
@@ -81,11 +102,11 @@ enum PageCompositor {
         if maskBitmap == nil && scale == 1.0,
            let bgPixels, bgW == width && bgH == height {
             bgPixels.withUnsafeBufferPointer { bgBuf in
-                let totalPixels = scaledW * scaledH
+                let totalPixels = renderedPixels
                 var px = 0
                 let simdEnd = totalPixels & ~7  // round down to multiple of 8
 
-                // SIMD: process 8 pixels at a time — read 8×3 RGB bytes, write 8×4 RGBA bytes
+                // SIMD-friendly loop: process 8 pixels at a time.
                 while px < simdEnd {
                     let srcBase = px * 3
                     let dstBase = px * 4
@@ -114,8 +135,8 @@ enum PageCompositor {
                 for x in 0..<scaledW {
                     let srcX = Double(x) / scale
                     let srcY = Double(y) / scale
-                    let px = Int(srcX)
-                    let py = Int(srcY)
+                    let px = min(max(Int(srcX), 0), width - 1)
+                    let py = min(max(Int(srcY), 0), height - 1)
 
                     let idx = (y * scaledW + x) * 4
                     var r: UInt8 = 255, g: UInt8 = 255, b: UInt8 = 255
@@ -135,7 +156,7 @@ enum PageCompositor {
                             let djvuY = height - 1 - py
                             let i = (djvuY * width + px) * 3
                             r = fgColorBuf[i]; g = fgColorBuf[i + 1]; b = fgColorBuf[i + 2]
-                        } else if let fgPixels {
+                        } else if let fgPixels, fgW > 0, fgH > 0 {
                             // Sample from foreground IW44 image (already top-down)
                             let fgX = min(px * fgW / max(1, width), fgW - 1)
                             let fgY = min(py * fgH / max(1, height), fgH - 1)
@@ -148,7 +169,7 @@ enum PageCompositor {
                         }
                     } else {
                         // Use background (already top-down)
-                        if let bgPixels {
+                        if let bgPixels, bgW > 0, bgH > 0 {
                             let bgX = min(px * bgW / max(1, width), bgW - 1)
                             let bgY = min(py * bgH / max(1, height), bgH - 1)
                             let bgIdx = (bgY * bgW + bgX) * 3
