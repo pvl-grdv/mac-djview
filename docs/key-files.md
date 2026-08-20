@@ -2,59 +2,80 @@
 description: Project structure and key files reference
 alwaysApply: true
 ---
-# Key Files
+# Key files
 
-## Project Layout
+## Project layout
 
-```
+```text
 mac-djview/
-├── Package.swift                          # SPM manifest (macOS 14+, Swift 5.10)
-├── CLAUDE.md                              # Entry point for AI assistants
-├── docs/                                  # Coding guidelines and conventions
+├── Package.swift
+├── CLAUDE.md
+├── MacDjView.entitlements
+├── Resources/
+│   └── AppIcon.icon/                    # Icon Composer source
 ├── Sources/MacDjView/
-│   ├── main.swift                         # NSApplication bootstrap + --test CLI mode
-│   ├── AppDelegate.swift                  # Window creation, menus, activation
-│   ├── ContentView.swift                  # SwiftUI: page navigation, zoom, File>Open
-│   ├── PageImageView.swift                # Scrollable image display
-│   │
-│   └── DjVu/                             # Pure Swift DjVu decoder (no external deps)
-│       ├── ByteStream.swift               # Binary reader (big-endian, bit-level)
-│       ├── IFFParser.swift                # FORM/chunk container parser
-│       ├── DjVuDocument.swift             # Multi-page document, DIRM directory
-│       ├── DjVuPage.swift                 # Single page: decode + compose layers
-│       ├── DjVuError.swift                # Error types
-│       │
-│       ├── ZPCodec.swift                  # ZP-Coder adaptive arithmetic decoder
-│       │
-│       ├── IW44Decoder.swift              # IW44 wavelet coefficient decoder (BG44/FG44)
-│       ├── IW44Image.swift                # Inverse wavelet transform + pixel output
-│       ├── IW44Structures.swift           # Blocks, bands, buckets, zigzag tables
-│       │
-│       ├── JB2Decoder.swift               # JB2 symbol/bitmap decoder (Sjbz chunks)
-│       ├── JB2Dict.swift                  # Symbol dictionary (Djbz chunks)
-│       ├── JB2Image.swift                 # Blit list rendering to bitmap
-│       ├── JB2Structures.swift            # Bitmap, NumContext, Baseline, Blit
-│       │
-│       └── PageCompositor.swift           # Combine mask + FG + BG → CGImage
-│
-├── scripts/
-│   └── make-app-bundle.sh                 # Creates .app bundle with Info.plist
-└── example.djvu                           # Test file (127-page bundled document)
+│   ├── MacDjViewApp.swift               # SwiftUI App entry, commands, CLI --test
+│   ├── AppDelegate.swift                # macOS delegate, URL opening, settings
+│   ├── ContentView.swift                # Main viewer, toolbar, native search field
+│   ├── DocumentViewModel.swift          # Document/view/search state
+│   ├── PageImageView.swift              # Single/two/continuous pages, cache, highlights
+│   ├── Platform.swift                   # NSImage/UIImage bridge
+│   ├── SafeFileLoader.swift             # Bounded document reads
+│   ├── DjVuUTType.swift                 # org.djvu.djvu UTType
+│   ├── PrivacyInfo.xcprivacy            # Privacy manifest
+│   └── DjVu/
+│       ├── DecodeLimits.swift            # Central resource/work limits
+│       ├── ByteStream.swift              # Bounds-checked binary reader
+│       ├── IFFParser.swift               # Bounded IFF parser
+│       ├── DjVuDocument.swift            # Multi-page document, DIRM, text access
+│       ├── DjVuPage.swift                # Per-page image/text layer access
+│       ├── DjVuText.swift                # TXTa/TXTz + text-zone parser
+│       ├── DjVuSearch.swift              # Bounded embedded-text search
+│       ├── DjVuError.swift
+│       ├── ZPCodec.swift
+│       ├── BZZDecoder.swift
+│       ├── IW44Decoder.swift
+│       ├── IW44Image.swift
+│       ├── IW44Structures.swift
+│       ├── JB2Decoder.swift
+│       ├── JB2Dict.swift
+│       ├── JB2Image.swift
+│       ├── JB2Structures.swift
+│       └── PageCompositor.swift
+├── Tests/MacDjViewTests/                # Decoder/safety/text/search/render tests
+├── docs/
+│   ├── product-direction.md              # Independent downstream stance
+│   ├── roadmap.md                        # Current platform work/status
+│   ├── architecture.md                   # Decoder/text architecture
+│   └── ...                               # Coding and Git conventions
+└── scripts/
+    ├── make-app-bundle.sh                # arm64 .app, icon, plist, ad-hoc signing
+    └── run-tests.sh
 ```
 
-## Build & Run
+## Important runtime boundaries
+
+- `SafeFileLoader` is the first file-size boundary.
+- `IFFParser` and `DecodeLimits` protect the decoder from malformed structure/work amplification.
+- `DjVuDocument` owns page enumeration and shared dictionaries.
+- `DjVuPage` exposes deterministic image and embedded-text decoding.
+- `DjVuText` and `DjVuSearch` do not depend on SwiftUI.
+- `DocumentViewModel` owns UI-facing async/cancellable search and rendering state.
+- `PageImageView` draws search highlights as UI overlays rather than modifying decoded page pixels.
+
+## Build and run
 
 | Command | Purpose |
-|---------|---------|
-| `swift build` | Debug build |
-| `swift build -c release` | Release build |
-| `swift run MacDjView` | Launch GUI app |
-| `.build/debug/MacDjView --test example.djvu` | CLI test: decode + render pages to /tmp |
-| `./scripts/make-app-bundle.sh` | Create MacDjView.app bundle |
+|---|---|
+| `swift build` | Debug SwiftPM build |
+| `swift build -c release` | Release SwiftPM build |
+| `swift run MacDjView` | Launch the executable app |
+| `swift run -c release MacDjView -- --test file.djvu` | Headless decode/render test |
+| `make unit-test` | Run test suite |
+| `./scripts/make-app-bundle.sh` | Build/sign arm64 macOS app bundle |
 
-## Reference Implementation
-The decoder is ported from **DjVu.js** (https://github.com/RussCoder/djvujs). To fetch reference source files:
-```bash
-gh api "repos/RussCoder/djvujs/contents/library/src/iw44/IWDecoder.js" --jq '.content' | base64 -D
-gh api "repos/RussCoder/djvujs/contents/library/src/jb2/JB2Codec.js" --jq '.content' | base64 -D
-```
+The packaged macOS app requires full Xcode because `actool` compiles `Resources/AppIcon.icon` into `Assets.car` and `AppIcon.icns`.
+
+## Reference implementations
+
+Reference implementations can help resolve format questions, but tests and the DjVu format behavior are authoritative for this codebase. Do not copy behavior blindly when it weakens bounds checking or conflicts with known valid files.
