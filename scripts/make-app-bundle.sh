@@ -112,6 +112,29 @@ cat > "$APP_DIR/Info.plist" <<PLIST
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>UTImportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>org.djvu.djvu</string>
+            <key>UTTypeDescription</key>
+            <string>DjVu Document</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>djvu</string>
+                    <string>djv</string>
+                </array>
+                <key>public.mime-type</key>
+                <string>image/vnd.djvu</string>
+            </dict>
+        </dict>
+    </array>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
@@ -137,6 +160,8 @@ PLIST
 plutil -lint "$APP_DIR/Info.plist"
 test "$(plutil -extract CFBundleIconName raw "$APP_DIR/Info.plist")" = "$APP_ICON_NAME"
 test "$(plutil -extract CFBundleIconFile raw "$APP_DIR/Info.plist")" = "$APP_ICON_NAME"
+test "$(plutil -extract UTImportedTypeDeclarations.0.UTTypeIdentifier raw "$APP_DIR/Info.plist")" = "org.djvu.djvu"
+test "$(/usr/libexec/PlistBuddy -c 'Print :UTImportedTypeDeclarations:0:UTTypeTagSpecification:public.mime-type' "$APP_DIR/Info.plist")" = "image/vnd.djvu"
 
 # Ad-hoc signing is sufficient for local/testing builds and preserves the
 # restrictive App Sandbox entitlements. Internet-downloaded builds will not

@@ -19,6 +19,23 @@ final class DjVuPage {
         self.dpi = info.dpi
     }
 
+    func textLayer() throws -> DjVuTextLayer? {
+        var textChunk: IFFChunk?
+        for child in chunk.children where child.id == "TXTa" || child.id == "TXTz" {
+            guard textChunk == nil else {
+                throw DjVuError.invalidFormat("Page contains multiple DjVu text chunks")
+            }
+            textChunk = child
+        }
+
+        guard let textChunk else { return nil }
+        return try DjVuTextDecoder.decode(
+            chunkID: textChunk.id,
+            data: textChunk.data,
+            pageHeight: height
+        )
+    }
+
     func render(scale: Double) throws -> CGImage {
         var bg44Chunks: [Data] = []
         var fg44Chunks: [Data] = []
