@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- simple scan/text bands -->
+  <rect x="352" y="408" width="300" height="34" rx="17" fill="#5542C5"/>
+  <rect x="352" y="482" width="238" height="28" rx="14" fill="#8B80D8"/>
+  <rect x="352" y="544" width="270" height="28" rx="14" fill="#8B80D8"/>
+
+  <!-- tiny image/scan cue -->
+  <rect x="352" y="628" width="248" height="132" rx="30" fill="#E4E1F5"/>
+  <path d="M 382 726 L 442 662 L 488 708 L 526 670 L 570 726 Z" fill="#6654CF"/>
+  <circle cx="548" cy="656" r="18" fill="#8B80D8"/>
+</svg>

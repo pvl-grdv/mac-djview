@@ -5,6 +5,9 @@ cd "$(dirname "$0")/.."
 
 ENTITLEMENTS="MacDjView.entitlements"
 PRIVACY_MANIFEST="Sources/MacDjView/PrivacyInfo.xcprivacy"
+APP_ICON="Resources/AppIcon.icon"
+APP_ICON_NAME="AppIcon"
+BUNDLE_ID="com.mac-djview.MacDjView"
 APP_BUNDLE="MacDjView.app"
 APP_DIR="$APP_BUNDLE/Contents"
 VERSION="${MACDJVIEW_VERSION:-1.0.0}"
@@ -31,6 +34,16 @@ if [[ ! -f "$PRIVACY_MANIFEST" ]]; then
     exit 1
 fi
 
+if [[ ! -d "$APP_ICON" ]]; then
+    echo "Missing Icon Composer source: $APP_ICON" >&2
+    exit 1
+fi
+
+if ! xcrun --find actool >/dev/null 2>&1; then
+    echo "actool is required to compile the Icon Composer source. Install/select full Xcode." >&2
+    exit 1
+fi
+
 echo "Building MacDjView $VERSION for arm64 / macOS 14+..."
 swift build -c release --arch arm64 "$@"
 BIN_DIR="$(swift build -c release --arch arm64 --show-bin-path "$@")"
@@ -43,6 +56,31 @@ cp "$BIN_DIR/MacDjView" "$APP_DIR/MacOS/MacDjView"
 strip "$APP_DIR/MacOS/MacDjView"
 cp "$PRIVACY_MANIFEST" "$APP_DIR/Resources/PrivacyInfo.xcprivacy"
 
+# Compile the Icon Composer master into the native appearance-aware Assets.car
+# plus an ICNS fallback for pre-Liquid-Glass macOS releases. Xcode/actool
+# generates the fallback from the same source because our deployment target is 14.
+ICON_TMP="$(mktemp -d)"
+trap 'rm -rf "$ICON_TMP"' EXIT
+
+xcrun actool "$APP_ICON" \
+    --compile "$ICON_TMP" \
+    --app-icon "$APP_ICON_NAME" \
+    --include-all-app-icons \
+    --enable-on-demand-resources NO \
+    --development-region en \
+    --target-device mac \
+    --minimum-deployment-target 14.0 \
+    --platform macosx \
+    --bundle-identifier "$BUNDLE_ID" \
+    --output-partial-info-plist "$ICON_TMP/partial-Info.plist" \
+    --output-format human-readable-text \
+    --notices --warnings --errors
+
+test -f "$ICON_TMP/Assets.car"
+test -f "$ICON_TMP/$APP_ICON_NAME.icns"
+cp "$ICON_TMP/Assets.car" "$APP_DIR/Resources/Assets.car"
+cp "$ICON_TMP/$APP_ICON_NAME.icns" "$APP_DIR/Resources/$APP_ICON_NAME.icns"
+
 cat > "$APP_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -53,7 +91,7 @@ cat > "$APP_DIR/Info.plist" <<PLIST
     <key>CFBundleExecutable</key>
     <string>MacDjView</string>
     <key>CFBundleIdentifier</key>
-    <string>com.mac-djview.MacDjView</string>
+    <string>$BUNDLE_ID</string>
     <key>CFBundleName</key>
     <string>MacDjView</string>
     <key>CFBundleDisplayName</key>
@@ -64,6 +102,10 @@ cat > "$APP_DIR/Info.plist" <<PLIST
     <string>$VERSION</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleIconName</key>
+    <string>$APP_ICON_NAME</string>
+    <key>CFBundleIconFile</key>
+    <string>$APP_ICON_NAME</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -93,6 +135,8 @@ cat > "$APP_DIR/Info.plist" <<PLIST
 PLIST
 
 plutil -lint "$APP_DIR/Info.plist"
+test "$(plutil -extract CFBundleIconName raw "$APP_DIR/Info.plist")" = "$APP_ICON_NAME"
+test "$(plutil -extract CFBundleIconFile raw "$APP_DIR/Info.plist")" = "$APP_ICON_NAME"
 
 # Ad-hoc signing is sufficient for local/testing builds and preserves the
 # restrictive App Sandbox entitlements. Internet-downloaded builds will not
@@ -112,4 +156,4 @@ if ! vtool -show-build "$APP_DIR/MacOS/MacDjView" | grep -Eq 'minos[[:space:]]+1
     exit 1
 fi
 
-echo "Created and signed $APP_BUNDLE ($ARCHS, macOS 14+)"
+echo "Created and signed $APP_BUNDLE ($ARCHS, macOS 14+, Icon Composer app icon)"
