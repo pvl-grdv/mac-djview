@@ -30,6 +30,7 @@ struct MacDjViewApp: App {
         #if os(macOS)
         .commands {
             fileCommands
+            findCommands
             viewCommands
             goCommands
         }
@@ -50,6 +51,31 @@ struct MacDjViewApp: App {
                 actions?.showFileImporter.wrappedValue = true
             }
             .keyboardShortcut("o", modifiers: .command)
+        }
+    }
+
+    @CommandsBuilder
+    private var findCommands: some Commands {
+        CommandGroup(after: .textEditing) {
+            Divider()
+
+            Button("Find…") {
+                actions?.presentSearch()
+            }
+            .keyboardShortcut("f", modifiers: .command)
+            .disabled(actions?.hasDocument != true)
+
+            Button("Find Next") {
+                actions?.nextSearchMatch()
+            }
+            .keyboardShortcut("g", modifiers: .command)
+            .disabled(actions?.canNavigateSearchResults != true)
+
+            Button("Find Previous") {
+                actions?.previousSearchMatch()
+            }
+            .keyboardShortcut("g", modifiers: [.command, .shift])
+            .disabled(actions?.canNavigateSearchResults != true)
         }
     }
 

@@ -26,22 +26,84 @@ private extension View {
     }
 }
 
-struct PageImageView: View {
-    let image: PlatformImage
-    let zoom: Double
-    var colorTheme: ColorTheme = .normal
+private struct SearchHighlightOverlay: View {
+    let rects: [DjVuTextRect]
+    let nativePageSize: CGSize
 
     var body: some View {
-        ScrollView([.horizontal, .vertical]) {
+        GeometryReader { geometry in
+            if nativePageSize.width > 0, nativePageSize.height > 0 {
+                ForEach(rects.indices, id: \.self) { index in
+                    let rect = rects[index]
+                    let scaleX = geometry.size.width / nativePageSize.width
+                    let scaleY = geometry.size.height / nativePageSize.height
+                    let width = max(1, CGFloat(rect.width) * scaleX)
+                    let height = max(1, CGFloat(rect.height) * scaleY)
+                    let x = CGFloat(rect.x) * scaleX
+                    let y = CGFloat(rect.y) * scaleY
+
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.accentColor.opacity(0.28))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 2)
+                                .stroke(Color.accentColor.opacity(0.75), lineWidth: 1)
+                        }
+                        .frame(width: width, height: height)
+                        .position(x: x + width / 2, y: y + height / 2)
+                }
+            }
+        }
+        .clipped()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct SearchablePageImage: View {
+    let image: PlatformImage
+    let colorTheme: ColorTheme
+    let nativePageSize: CGSize
+    let highlightRects: [DjVuTextRect]
+
+    var body: some View {
+        ZStack {
             Image(platformImage: image)
                 .resizable()
                 .interpolation(.high)
                 .applyColorTheme(colorTheme)
-                .frame(
-                    width: image.size.width * zoom,
-                    height: image.size.height * zoom
-                )
-                .padding(20)
+
+            SearchHighlightOverlay(
+                rects: highlightRects,
+                nativePageSize: nativePageSize
+            )
+        }
+    }
+}
+
+struct PageImageView: View {
+    let image: PlatformImage
+    let zoom: Double
+    var colorTheme: ColorTheme = .normal
+    var nativePageSize: CGSize? = nil
+    var highlightRects: [DjVuTextRect] = []
+
+    private var pageSize: CGSize {
+        nativePageSize ?? image.size
+    }
+
+    var body: some View {
+        ScrollView([.horizontal, .vertical]) {
+            SearchablePageImage(
+                image: image,
+                colorTheme: colorTheme,
+                nativePageSize: pageSize,
+                highlightRects: highlightRects
+            )
+            .frame(
+                width: image.size.width * zoom,
+                height: image.size.height * zoom
+            )
+            .padding(20)
         }
     }
 }
@@ -53,28 +115,46 @@ struct TwoPageView: View {
     let rightImage: PlatformImage?
     let zoom: Double
     var colorTheme: ColorTheme = .normal
+    var leftNativePageSize: CGSize? = nil
+    var rightNativePageSize: CGSize? = nil
+    var leftHighlightRects: [DjVuTextRect] = []
+    var rightHighlightRects: [DjVuTextRect] = []
 
     var body: some View {
         ScrollView([.horizontal, .vertical]) {
             HStack(spacing: 12) {
-                pageSlot(leftImage)
+                pageSlot(
+                    leftImage,
+                    nativePageSize: leftNativePageSize ?? leftImage.size,
+                    highlightRects: leftHighlightRects
+                )
                 if let rightImage {
-                    pageSlot(rightImage)
+                    pageSlot(
+                        rightImage,
+                        nativePageSize: rightNativePageSize ?? rightImage.size,
+                        highlightRects: rightHighlightRects
+                    )
                 }
             }
             .padding(20)
         }
     }
 
-    private func pageSlot(_ image: PlatformImage) -> some View {
+    private func pageSlot(
+        _ image: PlatformImage,
+        nativePageSize: CGSize,
+        highlightRects: [DjVuTextRect]
+    ) -> some View {
         ZStack {
             pageBackgroundColor(for: colorTheme)
                 .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
 
-            Image(platformImage: image)
-                .resizable()
-                .interpolation(.high)
-                .applyColorTheme(colorTheme)
+            SearchablePageImage(
+                image: image,
+                colorTheme: colorTheme,
+                nativePageSize: nativePageSize,
+                highlightRects: highlightRects
+            )
         }
         .frame(
             width: image.size.width * zoom,
@@ -159,6 +239,8 @@ struct ContinuousPageView: View {
     var colorTheme: ColorTheme = .normal
     @Binding var currentPage: Int
     @Binding var scrollTarget: Int?
+    var highlightedPageIndex: Int? = nil
+    var highlightRects: [DjVuTextRect] = []
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -170,7 +252,8 @@ struct ContinuousPageView: View {
                             pageIndex: pageIndex,
                             zoom: zoom,
                             pageCache: pageCache,
-                            colorTheme: colorTheme
+                            colorTheme: colorTheme,
+                            highlightRects: highlightedPageIndex == pageIndex ? highlightRects : []
                         )
                         .id(pageIndex)
                         .onAppear {
@@ -200,6 +283,8 @@ struct ContinuousTwoPageView: View {
     var colorTheme: ColorTheme = .normal
     @Binding var currentPage: Int
     @Binding var scrollTarget: Int?
+    var highlightedPageIndex: Int? = nil
+    var highlightRects: [DjVuTextRect] = []
 
     private var spreadCount: Int {
         if document.pageCount <= 1 { return document.pageCount }
@@ -232,7 +317,8 @@ struct ContinuousTwoPageView: View {
                                 pageIndex: pages.left,
                                 zoom: zoom,
                                 pageCache: pageCache,
-                                colorTheme: colorTheme
+                                colorTheme: colorTheme,
+                                highlightRects: highlightedPageIndex == pages.left ? highlightRects : []
                             )
                             if let right = pages.right {
                                 ContinuousPageSlot(
@@ -240,7 +326,8 @@ struct ContinuousTwoPageView: View {
                                     pageIndex: right,
                                     zoom: zoom,
                                     pageCache: pageCache,
-                                    colorTheme: colorTheme
+                                    colorTheme: colorTheme,
+                                    highlightRects: highlightedPageIndex == right ? highlightRects : []
                                 )
                             }
                         }
@@ -272,6 +359,7 @@ struct ContinuousPageSlot: View {
     let zoom: Double
     let pageCache: PageCache
     var colorTheme: ColorTheme = .normal
+    var highlightRects: [DjVuTextRect] = []
 
     @State private var image: PlatformImage?
     @State private var error: String?
@@ -284,16 +372,25 @@ struct ContinuousPageSlot: View {
         CGFloat(document.pages[pageIndex].height) * zoom
     }
 
+    private var nativePageSize: CGSize {
+        CGSize(
+            width: CGFloat(document.pages[pageIndex].width),
+            height: CGFloat(document.pages[pageIndex].height)
+        )
+    }
+
     var body: some View {
         ZStack {
             pageBackgroundColor(for: colorTheme)
                 .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
 
             if let image {
-                Image(platformImage: image)
-                    .resizable()
-                    .interpolation(.high)
-                    .applyColorTheme(colorTheme)
+                SearchablePageImage(
+                    image: image,
+                    colorTheme: colorTheme,
+                    nativePageSize: nativePageSize,
+                    highlightRects: highlightRects
+                )
             } else if let error {
                 VStack {
                     Image(systemName: "exclamationmark.triangle")

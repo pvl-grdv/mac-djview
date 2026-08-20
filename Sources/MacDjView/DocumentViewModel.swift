@@ -43,9 +43,16 @@ final class DocumentViewModel {
     var documentURL: URL?
     var showFileImporter = false
 
+    var searchQuery = ""
+    var searchMatches: [DjVuSearchMatch] = []
+    var selectedSearchMatchIndex: Int?
+    var isSearching = false
+    var searchErrorMessage: String?
+
     let pageCache = PageCache()
 
     private var renderTask: Task<Void, Never>?
+    private var searchTask: Task<Void, Never>?
 
     var hasDocument: Bool { document != nil }
     var pageCount: Int { document?.pageCount ?? 0 }
@@ -54,6 +61,24 @@ final class DocumentViewModel {
     var canGoForward: Bool {
         guard let document else { return false }
         return currentPage < document.pageCount - 1
+    }
+
+    var selectedSearchMatch: DjVuSearchMatch? {
+        guard let index = selectedSearchMatchIndex,
+              searchMatches.indices.contains(index) else { return nil }
+        return searchMatches[index]
+    }
+
+    var canNavigateSearchResults: Bool { !searchMatches.isEmpty }
+
+    var searchResultText: String {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return "" }
+        if isSearching { return "Searching…" }
+        if searchErrorMessage != nil { return "Search failed" }
+        guard !searchMatches.isEmpty else { return "No results" }
+        let selected = (selectedSearchMatchIndex ?? 0) + 1
+        return "\(selected) of \(searchMatches.count)"
     }
 
     var pageIndicatorText: String {
@@ -170,6 +195,84 @@ final class DocumentViewModel {
         }
     }
 
+    func setSearchQuery(_ query: String) {
+        searchQuery = query
+        searchTask?.cancel()
+        searchMatches = []
+        selectedSearchMatchIndex = nil
+        searchErrorMessage = nil
+
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let document, !trimmed.isEmpty else {
+            isSearching = false
+            return
+        }
+
+        isSearching = true
+        searchTask = Task { [weak self, document] in
+            do {
+                try await Task.sleep(for: .milliseconds(180))
+                try Task.checkCancellation()
+
+                let matches = try await Task.detached(priority: .userInitiated) {
+                    try DjVuSearchEngine.search(document: document, query: trimmed)
+                }.value
+                try Task.checkCancellation()
+
+                await MainActor.run {
+                    guard let self, self.searchQuery == query else { return }
+                    self.searchMatches = matches
+                    self.selectedSearchMatchIndex = matches.isEmpty ? nil : 0
+                    self.isSearching = false
+                    if !matches.isEmpty {
+                        self.navigateToSelectedSearchMatch()
+                    }
+                }
+            } catch is CancellationError {
+                // Superseded by a newer query.
+            } catch {
+                await MainActor.run {
+                    guard let self, self.searchQuery == query else { return }
+                    self.searchMatches = []
+                    self.selectedSearchMatchIndex = nil
+                    self.searchErrorMessage = error.localizedDescription
+                    self.isSearching = false
+                }
+            }
+        }
+    }
+
+    func nextSearchMatch() {
+        guard !searchMatches.isEmpty else { return }
+        let current = selectedSearchMatchIndex ?? -1
+        selectedSearchMatchIndex = (current + 1) % searchMatches.count
+        navigateToSelectedSearchMatch()
+    }
+
+    func previousSearchMatch() {
+        guard !searchMatches.isEmpty else { return }
+        let current = selectedSearchMatchIndex ?? 0
+        selectedSearchMatchIndex = (current - 1 + searchMatches.count) % searchMatches.count
+        navigateToSelectedSearchMatch()
+    }
+
+    func highlightRects(for pageIndex: Int) -> [DjVuTextRect] {
+        guard let match = selectedSearchMatch, match.pageIndex == pageIndex else { return [] }
+        return match.rects
+    }
+
+    private func navigateToSelectedSearchMatch() {
+        guard let match = selectedSearchMatch, let document else { return }
+        let target = min(max(match.pageIndex, 0), document.pageCount - 1)
+        currentPage = pageLayout == .twoPage ? spreadStartPage(for: target) : target
+
+        if scrollMode == .continuous {
+            scrollTarget = target
+        } else {
+            renderCurrentPage()
+        }
+    }
+
     func loadDocument(url: URL) {
         isLoading = true
         errorMessage = nil
@@ -178,6 +281,12 @@ final class DocumentViewModel {
         fileName = url.lastPathComponent
         documentURL = url
         pageCache.removeAll()
+        searchTask?.cancel()
+        searchQuery = ""
+        searchMatches = []
+        selectedSearchMatchIndex = nil
+        isSearching = false
+        searchErrorMessage = nil
 
         renderTask?.cancel()
         renderTask = Task {
@@ -338,9 +447,13 @@ struct DocumentActions {
     var adjustZoom: (Double) -> Void
     var zoomToActualSize: () -> Void
     var fitToHeight: () -> Void
+    var presentSearch: () -> Void
+    var nextSearchMatch: () -> Void
+    var previousSearchMatch: () -> Void
     var canGoBack: Bool
     var canGoForward: Bool
     var hasDocument: Bool
+    var canNavigateSearchResults: Bool
     var colorTheme: Binding<ColorTheme>
     var pageLayout: Binding<PageLayout>
     var scrollMode: Binding<ScrollMode>
