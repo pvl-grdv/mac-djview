@@ -3,7 +3,10 @@ import PackageDescription
 
 let package = Package(
     name: "MacDjView",
-    platforms: [.macOS("26.0")],
+    platforms: [
+        .macOS("26.0"),
+        .iOS(.v17)
+    ],
     targets: [
         .executableTarget(
             name: "MacDjView",
