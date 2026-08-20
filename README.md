@@ -123,6 +123,7 @@ Key metrics to watch: **p95 render time** and **peak memory**.
    - [Code best practices](./docs/code-best-practices.md)
    - [Naming conventions](./docs/naming-conventions.md)
    - [Architecture overview](./docs/architecture.md)
+   - [Platform integration roadmap](./docs/roadmap.md)
    - [Git conventions](./docs/git-conventions.md)
 3. Run unit tests: `make unit-test`
 4. Visual test: `.build/debug/MacDjView --test <your-file>.djvu`
