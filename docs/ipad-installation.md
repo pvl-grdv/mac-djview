@@ -1,50 +1,66 @@
-# Install on an iPad with a free Apple Account
+# Install on iPad Pro 10.5-inch without paid Apple Developer membership
 
-MacDjView supports **iPadOS 17+**, including the **10.5-inch iPad Pro (2017)**, which cannot install iPadOS 18. Xcode 27 supports development and debugging on devices running iPadOS 17. A paid Apple Developer Program membership is **not** needed to run a development build on your own iPad.
+MacDjView supports iPadOS 17+, including iPad Pro 10.5-inch (2017).
+The app is built by GitHub Actions using Xcode; **you do not need Xcode installed on your own Mac** to install the CI build.
 
-## What you need
+## Recommended: GitHub Actions + Sideloadly (no local Xcode)
 
-- An Apple silicon Mac running a version compatible with Xcode 27 (macOS 27.2 works).
-- Full Xcode 27 installed (not only Command Line Tools).
-- The iPad and a working USB/Lightning cable, unlocked and trusted.
-- A **free Apple Account** in Xcode; no App Store Connect or TestFlight account.
+1. Open the [GitHub Actions Build and release workflow](https://github.com/pvl-grdv/mac-djview/actions/workflows/build-macos-app.yml) and pick the latest **successful** run for the desired commit/branch.
+2. Under **Artifacts**, download `MacDjView-iPadOS-unsigned-ipa`. Unzip GitHub's downloaded artifact ZIP; it contains `MacDjView-iPadOS-unsigned.ipa` and a SHA-256 checksum. **Do not extract the inner IPA.**
+3. Download [Sideloadly for macOS](https://sideloadly.io/) from its official site. You do **not** need Xcode or a paid Apple Developer Program membership.
+4. Connect the unlocked iPad to the Mac using Lightning and accept **Trust This Computer**. Select the iPad in Sideloadly, drag `MacDjView-iPadOS-unsigned.ipa` into Sideloadly, and use **Apple ID Sideload** with your free Apple Account. Sideloadly signs the IPA for your specific iPad and installs it.
+5. On the iPad, trust the developer profile at **Settings → General → VPN & Device Management** if requested, and enable **Settings → Privacy & Security → Developer Mode** if prompted (restarting the iPad if required).
+6. Open MacDjView, tap the folder button, and select your local `.cbr` or `.djvu` book from Files.
 
-## Install
+The IPA in Actions is **unsigned and cannot be installed directly**. The signing/installing step is done locally by Sideloadly, never by GitHub. This is a personal development install, not an App Store or TestFlight release.
 
-1. Clone/download the repository. Open **`ios/MacDjView-iOS.xcodeproj`** in Xcode (not just `Package.swift`).
-2. In **Xcode → Settings → Accounts**, sign in with your Apple Account. Xcode displays a **Personal Team** if you're not enrolled in the paid program.
-3. In the project editor select target **MacDjView-iPad → Signing & Capabilities**. Enable **Automatically manage signing** and select your **Personal Team**. If Xcode reports a bundle-ID collision, change **Bundle Identifier** to a unique reverse-DNS identifier (for example, `com.yourname.macdjview`). Do not commit your personal Team ID or private signing material.
-4. Connect and unlock the iPad; tap **Trust** on its dialog and choose it as the destination in Xcode. If prompted, enable **Settings → Privacy & Security → Developer Mode** on the iPad and restart it.
-5. Select the **MacDjView-iPad** scheme and press **⌘R**. Xcode builds, signs and installs the iPad app locally.
-6. Copy the book into the iPad's **Files** app (On My iPad or iCloud Drive). Tap the reader's folder button to pick a `.cbr` or `.djvu` file.
+### Keep the app available after 7 days
 
-Only Xcode performs signing. The GitHub CI build is deliberately unsigned; do not attempt to install its unsigned build directly.
+Apple's free provisioning profile expires **every seven days**, regardless of how the app was compiled. Sideloadly offers an automatic refresh daemon; it can re-sign/reinstall while the iPad is connected by USB or reachable over the same Wi-Fi network with the Mac running. Otherwise, sideload the same IPA again before it expires. Refresh is not guaranteed when the Mac is off or the iPad is away.
 
-## Free account limitations
+Keep the **same Apple Account and bundle identifier** for refresh/reinstallation to avoid losing app data. Keep the original CBR books safely stored in the iPad Files app, rather than relying on the application's sandbox for sole copies.
 
-Apple's Personal Team provisions a device build for **seven days**. When the app stops launching after expiration, connect the iPad and use **⌘R** again in Xcode to renew the provisioning. This is a limitation of free signing, not a bug in MacDjView. TestFlight, App Store distribution, Developer ID notarization, and creating distributable signed IPAs are outside this workflow. You don't need to buy a membership just to read your own CBR books.
+**Security:** Sideloadly is third-party software and asks for Apple Account authentication. Download from the official site and review its privacy/credential handling. If you'd rather not enter your primary Apple Account into a third-party tool, use a dedicated free Apple Account for personal sideloading, or choose the Xcode method below.
+
+Alternative: [AltStore Classic](https://altstore.io/) and [AltServer for macOS](https://faq.altstore.io/altstore-classic/how-to-install-altstore-macos) can sign/install IPA files with a free Apple Account and attempt periodic refresh over Wi-Fi. On iPadOS 17 use **AltStore Classic**, not the region-restricted AltStore PAL.
+
+## Alternative: install directly from Xcode
+
+If you prefer Apple's own tooling, install full Xcode 27 on macOS 27.2.
+
+1. Clone the repository and open **`ios/MacDjView-iOS.xcodeproj`** (not just `Package.swift`).
+2. Add your free Apple Account under **Xcode → Settings → Accounts**.
+3. Select **MacDjView-iPad → Signing & Capabilities**, enable **Automatically manage signing**, and choose your **Personal Team**. Change the bundle identifier locally if it collides with an existing App ID; do not commit your personal Team ID or signing material.
+4. Connect/trust the iPad, select it as the run destination, enable Developer Mode when prompted, and press **⌘R** to build, sign and install.
+5. Repeat with Xcode to renew a Personal Team installation after seven days.
+
+## What the CI checks
+
+GitHub Actions builds a real arm64 `MacDjView.app` for iPadOS with `CODE_SIGNING_ALLOWED=NO`, verifies `MinimumOSVersion = 17.0`, and tests both DjVu and CBR document type registrations. It then creates a standard `Payload/MacDjView.app` unsigned IPA and uploads it as an artifact. The workflow stores no Apple credentials or provisioning certificates. Artifacts are retained for **14 days**.
+
+**A successful CI build does not prove the reader works on physical iPadOS 17 hardware.** Real CBR books, large archives, memory pressure and rotation still require on-device testing.
 
 ## First-device checklist
 
-- Open a local `.cbr` (RAR/RAR5) book; verify pages `1, 2, 10` appear in the correct order.
-- Turn the iPad between portrait and landscape; try previous/next, zoom, and continuous paging.
-- Reopen the same book and verify the last-read page is restored.
-- Test a DjVu book so the existing renderer and text search still work.
-- For malformed, encrypted or multi-volume RAR books, expect a clear error rather than an app crash.
-
-CI builds the iPadOS arm64 `.app` with `CODE_SIGNING_ALLOWED=NO` and checks the deployment floor. **CI cannot verify actual iPadOS 17 runtime behavior** without a physical device running it.
+- Open a real RAR/RAR5 `.cbr` book and confirm pages `1`, `2`, `10` are sorted correctly.
+- Check page navigation, rotation, zoom and continuous scrolling.
+- Reopen the same book and check reading-position restoration.
+- Open a `.djvu` book to check rendering and native text search.
+- Confirm encrypted or multi-volume RAR files fail clearly rather than hanging or crashing.
 
 ## Troubleshooting
 
-- **No Personal Team / provisioning error:** confirm the Apple Account is added in Xcode and Automatic Signing is enabled for **MacDjView-iPad**.
-- **Device not shown:** unlock, trust the Mac, connect via USB, wait for Xcode's device setup; confirm Developer Mode.
-- **Bundle ID unavailable:** choose a unique identifier in the target's Signing settings.
-- **After 7 days app won't launch:** reconnect and press Run in Xcode to re-sign and install.
-- **Only a command-line executable appears:** you probably opened `Package.swift`; open the **`ios/MacDjView-iOS.xcodeproj`** project.
+- **GitHub artifact expired or missing:** trigger another workflow run or use a more recent green run. The uploaded file is the outer artifact ZIP; extract that ZIP to get the `.ipa`.
+- **No device found in Sideloadly:** reconnect over USB, unlock the iPad, trust the computer, and check Finder's device list.
+- **Cannot launch app:** trust the Apple Account's developer profile and enable Developer Mode when required.
+- **After 7 days it stops launching:** refresh using Sideloadly/AltStore, or reinstall via Xcode with the same signing identity.
+- **IPA says invalid signature:** an unsigned CI IPA must be signed with Sideloadly or AltStore; do not use a generic file installer.
+- **Sideload utility incompatible with your Mac:** use the Xcode fallback; no specific sideloader's compatibility with macOS 27.2 has been tested on your machine.
 
-## Official references
+## Sources
 
-- [Apple Developer — Free account / Personal Team limits](https://developer.apple.com/help/account/basics/about-your-developer-account)
-- [Apple — iPadOS 17 on 10.5-inch iPad Pro](https://www.apple.com/newsroom/2023/09/ipados-17-is-now-available/)
-- [Apple — Xcode 27 deployment and device support](https://developer.apple.com/xcode/system-requirements)
-- [Apple — Run an app on a device](https://help.apple.com/xcode/mac/current/en.lproj/dev5a825a1ca.html)
+- [Apple Developer — free account restrictions](https://developer.apple.com/help/account/basics/about-your-developer-account)
+- [Sideloadly — Apple ID sideloading and automatic refresh](https://sideloadly.io/)
+- [Sideloadly FAQ — refresh requirements](https://sideloadly.io/faq.html)
+- [AltStore Classic and AltServer](https://faq.altstore.io/altstore-classic/how-to-install-altstore-macos)
+- [iPadOS 17 and iPad Pro compatibility](https://www.apple.com/newsroom/2023/09/ipados-17-is-now-available/)

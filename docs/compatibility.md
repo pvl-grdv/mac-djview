@@ -5,7 +5,7 @@ MacDjView stays deliberately small: an offline reader, one shared Swift codebase
 | Platform | Runtime floor | CI toolchain | Distribution |
 | --- | --- | --- | --- |
 | macOS Apple silicon | macOS 14 | Xcode 27 | Ad-hoc signed `.app.zip` with Gatekeeper instructions |
-| iPad / iPhone arm64 | iPadOS/iOS 17 | Xcode 27 | Run from Xcode with free Personal Team (renew every seven days) |
+| iPad / iPhone arm64 | iPadOS/iOS 17 | Xcode 27 in GitHub Actions | Unsigned IPA artifact + local Sideloadly/AltStore signing; Xcode Personal Team is optional (7-day refresh) |
 
 The **10.5-inch iPad Pro** supports iPadOS 17, but not 18. Xcode 27 supports debugging devices running iOS/iPadOS 17. Do **not** raise `IPHONEOS_DEPLOYMENT_TARGET` for UI features; new APIs require version checks and a fallback.
 
@@ -27,10 +27,10 @@ The **10.5-inch iPad Pro** supports iPadOS 17, but not 18. Xcode 27 supports deb
 
 ## CI + release flow (without paid membership)
 
-1. Short topic branch → PR: macOS `swift test` + packaged app, iPadOS arm64 **`.app` target build**; check both macOS 14 and iPadOS 17 minimum deployment, DjVu/CBR registrations.
+1. Short topic branch → PR: macOS `swift test` + packaged app, iPadOS arm64 **`.app` target build**; check both macOS 14 and iPadOS 17 minimum deployment, DjVu/CBR registrations; upload an **unsigned IPA** so users can sideload without installing Xcode.
 2. Merge after green CI and device smoke test. An automated iOS build is not a substitute for testing on the iPad Pro 10.5 itself.
 3. Tags `vX.Y.Z` create only a macOS `.app.zip` release plus SHA-256. No Apple signing secrets or distribution certificates are needed or stored in GitHub.
-4. On your own iPad, open `ios/MacDjView-iOS.xcodeproj` and Run using Personal Team. See [the iPad installation guide](ipad-installation.md).
+4. On your own iPad, install the CI-produced IPA using Sideloadly or AltStore with a free Apple Account; alternatively use `ios/MacDjView-iOS.xcodeproj` with Personal Team in Xcode. See [the iPad installation guide](ipad-installation.md).
 
 Avoid introducing Fastlane, Xcode Cloud, TestFlight, macOS notarization, CI signing secrets, new major Swift language modes, or an OS 27-only UI until they solve a real product problem.
 

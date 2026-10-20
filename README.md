@@ -55,13 +55,13 @@ swift run MacDjView
 
 Use `Package.swift` for SwiftPM testing and the macOS build script above to make the app bundle. The GitHub Actions workflow produces a macOS arm64 archive on successful runs.
 
-### iPadOS (no paid Apple Developer membership needed)
+### iPadOS (no paid membership or local Xcode required)
 
-**Open [ios/MacDjView-iOS.xcodeproj](ios/MacDjView-iOS.xcodeproj) in Xcode 27** and choose the shared **MacDjView-iPad** scheme. This is an actual iPad/iPhone app target; building the `Package.swift` executable by itself does **not** produce an installable iOS app. The project shares the Swift source files with the macOS SwiftPM target.
+**Simplest path:** [download the latest unsigned iPadOS IPA from a successful GitHub Actions run](https://github.com/pvl-grdv/mac-djview/actions/workflows/build-macos-app.yml) (artifact `MacDjView-iPadOS-unsigned-ipa`), unzip the downloaded **outer ZIP**, and use [Sideloadly](https://sideloadly.io/) to sign/install the contained IPA with your free Apple Account. Sideloadly can attempt automatic refresh, subject to Apple's seven-day free provisioning limit.
 
-To run it on your own iPad: add your Apple Account in Xcode Settings → Accounts, select your **Personal Team** under Signing & Capabilities, connect the unlocked iPad and trust your Mac, select it as the run destination, and press **Run (⌘R)**. Enable Developer Mode on the iPad if prompted. A Personal Team app must be re-provisioned/reinstalled after seven days. Details and troubleshooting: [Install on iPad without a paid account](docs/ipad-installation.md).
+If you prefer Apple's own tools, open [ios/MacDjView-iOS.xcodeproj](ios/MacDjView-iOS.xcodeproj) in Xcode 27, select `MacDjView-iPad` and run on the iPad using your Personal Team. Both methods support iPad Pro 10.5-inch on iPadOS 17. Full instructions: [Install on an iPad, with or without Xcode](docs/ipad-installation.md).
 
-Once installed, tap the folder button and select a `.cbr` or `.djvu` book from Files. On Mac use **File → Open…** or drop a file into the reader. CI verifies an **unsigned** iPadOS 17-compatible `.app` bundle; it cannot sign for your Personal Team and does not publish a usable `.ipa` or TestFlight build.
+Once installed, tap the folder button and select a `.cbr` or `.djvu` book from Files. On Mac use **File → Open…** or drop a file into the reader. GitHub publishes an **unsigned** iPadOS IPA artifact for local signing, not an App Store/TestFlight or pre-signed distributable build.
 
 ## macOS releases and Gatekeeper
 
@@ -96,7 +96,7 @@ make unit-test
 
 Tests cover binary bounds checking, decoder safety limits, IFF parsing, wavelet and compositor behavior, embedded DjVu text decoding, Unicode/text-zone handling, and document search.
 
-CI runs for pull requests, pushes to `main`, and version tags. The macOS job runs unit tests, builds the arm64 app, validates sandbox entitlements, and packages the release artifact. The iPadOS job builds an actual unsigned `.app` for arm64 and verifies its `MinimumOSVersion = 17.0` and DjVu/CBR file type registrations. PR builds are cancellable when superseded. Only macOS is published in Releases; the iPad app is locally signed with a free Apple Account.
+CI runs for pull requests, pushes to `main`, and version tags. The macOS job runs unit tests, builds the arm64 app, validates sandbox entitlements, and packages the release artifact. The iPadOS job builds an actual unsigned `.app` for arm64, verifies its `MinimumOSVersion = 17.0` and DjVu/CBR file type registrations, and uploads an unsigned `.ipa` artifact for local sideloading. PR builds are cancellable when superseded. Only macOS is published in Releases; the CI-provided iPad IPA is locally signed with a free Apple Account and does not require Xcode on the user's Mac.
 
 [Compatibility and WWDC24–26 choices](docs/compatibility.md) explains which APIs we intentionally use and why we keep older OS fallbacks.
 

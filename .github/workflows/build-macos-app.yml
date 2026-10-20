@@ -160,6 +160,34 @@ jobs:
           test "$(plutil -extract UTImportedTypeDeclarations.1.UTTypeIdentifier raw "$APP/Info.plist")" = "com.mac-djview.comic-rar"
           test "$(lipo -archs "$APP/MacDjView")" = "arm64"
 
+      # Package the already-built unsigned .app as a standard Payload/*.app IPA.
+      # Sideloadly or AltStore signs it locally with the user's free Apple ID.
+      # GitHub never receives Apple credentials, signing keys or profiles.
+      - name: Package unsigned IPA for personal sideloading
+        run: |
+          set -euo pipefail
+          APP=".build/ipados/Build/Products/Release-iphoneos/MacDjView.app"
+          DIST="$PWD/.build/ipados/dist"
+          mkdir -p "$DIST/Payload"
+          ditto "$APP" "$DIST/Payload/MacDjView.app"
+          (
+            cd "$DIST"
+            zip -qry MacDjView-iPadOS-unsigned.ipa Payload
+            unzip -tqq MacDjView-iPadOS-unsigned.ipa
+            shasum -a 256 MacDjView-iPadOS-unsigned.ipa > MacDjView-iPadOS-unsigned.ipa.sha256
+          )
+          test -s "$DIST/MacDjView-iPadOS-unsigned.ipa"
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacDjView-iPadOS-unsigned-ipa
+          path: |
+            .build/ipados/dist/MacDjView-iPadOS-unsigned.ipa
+            .build/ipados/dist/MacDjView-iPadOS-unsigned.ipa.sha256
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
