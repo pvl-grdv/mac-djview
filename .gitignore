@@ -3,3 +3,8 @@
 MacDjView.app/
 /example.djvu
 /large.djvu
+
+# User-specific Xcode state and derived app builds
+xcuserdata/
+*.xcuserstate
+DerivedData/

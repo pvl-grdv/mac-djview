@@ -8,7 +8,7 @@ let package = Package(
         .iOS(.v17)
     ],
     dependencies: [
-        .package(url: "https://github.com/mtgto/Unrar.swift.git", from: "0.5.4")
+        .package(url: "https://github.com/mtgto/Unrar.swift.git", exact: "0.5.4")
     ],
     targets: [
         .executableTarget(

@@ -220,8 +220,8 @@
             isa = XCRemoteSwiftPackageReference;
             repositoryURL = "https://github.com/mtgto/Unrar.swift.git";
             requirement = {
-                kind = upToNextMajorVersion;
-                minimumVersion = 0.5.4;
+                kind = exactVersion;
+                version = 0.5.4;
             };
         };
 /* End XCRemoteSwiftPackageReference section */
