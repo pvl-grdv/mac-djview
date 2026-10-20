@@ -38,7 +38,9 @@ struct MacDjViewApp: App {
             viewCommands
             goCommands
         }
+        #endif
 
+        #if os(macOS)
         // Finder documents open in their own windows instead of replacing
         // an already open book. The value is used for window restoration.
         WindowGroup("Document", for: URL.self) { documentURL in
