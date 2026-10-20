@@ -178,9 +178,14 @@ final class PageCache {
     private let renderQueue = DispatchQueue(label: "com.mac-djview.render", qos: .userInitiated)
 
     init() {
+        #if os(macOS)
         cache.countLimit = 10
-        // 256 MB limit — each image costs width × height × 4 bytes
         cache.totalCostLimit = 256 * 1024 * 1024
+        #else
+        // Older iPads have a smaller memory budget than Apple silicon Macs.
+        cache.countLimit = 4
+        cache.totalCostLimit = 96 * 1024 * 1024
+        #endif
     }
 
     func image(forPage pageIndex: Int, zoom zoomPercent: Int) -> PlatformImage? {

@@ -242,27 +242,26 @@ struct ContentView: View {
 
         #if os(macOS)
         ToolbarItemGroup(placement: .principal) {
-            Picker("Layout", selection: Binding(
-                get: { viewModel.pageLayout },
-                set: { viewModel.pageLayout = $0 }
-            )) {
-                Label("Single Page", systemImage: "doc").tag(PageLayout.single)
-                Label("Two Pages", systemImage: "book").tag(PageLayout.twoPage)
+            Menu {
+                Picker("Page Layout", selection: Binding(
+                    get: { viewModel.pageLayout },
+                    set: { viewModel.pageLayout = $0 }
+                )) {
+                    Label("Single Page", systemImage: "doc").tag(PageLayout.single)
+                    Label("Two Pages", systemImage: "book").tag(PageLayout.twoPage)
+                }
+                Picker("Scrolling", selection: Binding(
+                    get: { viewModel.scrollMode },
+                    set: { viewModel.scrollMode = $0 }
+                )) {
+                    Label("Paged", systemImage: "square").tag(ScrollMode.paged)
+                    Label("Continuous", systemImage: "square.3.layers.3d.down.left")
+                        .tag(ScrollMode.continuous)
+                }
+            } label: {
+                Label("Reading Layout", systemImage: "rectangle.split.2x1")
             }
-            .pickerStyle(.segmented)
-            .frame(width: 140)
-            .help("Page Layout")
-
-            Picker("Scroll", selection: Binding(
-                get: { viewModel.scrollMode },
-                set: { viewModel.scrollMode = $0 }
-            )) {
-                Label("Paged", systemImage: "square").tag(ScrollMode.paged)
-                Label("Continuous", systemImage: "square.3.layers.3d.down.left").tag(ScrollMode.continuous)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 160)
-            .help("Scroll Mode")
+            .disabled(!viewModel.hasDocument)
         }
         #endif
 
@@ -295,29 +294,7 @@ struct ContentView: View {
                 .help("Next Search Result")
             }
 
-            #if !os(macOS)
-            Menu {
-                Picker("Layout", selection: Binding(
-                    get: { viewModel.pageLayout },
-                    set: { viewModel.pageLayout = $0 }
-                )) {
-                    Label("Single Page", systemImage: "doc").tag(PageLayout.single)
-                    Label("Two Pages", systemImage: "book").tag(PageLayout.twoPage)
-                }
-
-                Picker("Scroll", selection: Binding(
-                    get: { viewModel.scrollMode },
-                    set: { viewModel.scrollMode = $0 }
-                )) {
-                    Label("Paged", systemImage: "square").tag(ScrollMode.paged)
-                    Label("Continuous", systemImage: "square.3.layers.3d.down.left").tag(ScrollMode.continuous)
-                }
-            } label: {
-                Image(systemName: "rectangle.split.2x1")
-            }
-            .disabled(!viewModel.hasDocument)
-            #endif
-
+            #if os(macOS)
             Menu {
                 ForEach(ColorTheme.allCases, id: \.self) { theme in
                     Button {
@@ -357,12 +334,84 @@ struct ContentView: View {
                 Image(systemName: "arrow.up.and.down.text.horizontal")
             }
             .help("Fit to Height")
+            #else
+            // Keep the older iPad's toolbar compact. Menus are native on iPadOS 17.
+            Menu {
+                Picker("Page Layout", selection: Binding(
+                    get: { viewModel.pageLayout },
+                    set: { viewModel.pageLayout = $0 }
+                )) {
+                    Label("Single Page", systemImage: "doc").tag(PageLayout.single)
+                    Label("Two Pages", systemImage: "book").tag(PageLayout.twoPage)
+                }
+                .disabled(!viewModel.hasDocument)
 
-            #if !os(macOS)
-            Button { showSettings = true } label: {
-                Image(systemName: "gear")
+                Picker("Scrolling", selection: Binding(
+                    get: { viewModel.scrollMode },
+                    set: { viewModel.scrollMode = $0 }
+                )) {
+                    Label("Paged", systemImage: "square").tag(ScrollMode.paged)
+                    Label("Continuous", systemImage: "square.3.layers.3d.down.left")
+                        .tag(ScrollMode.continuous)
+                }
+                .disabled(!viewModel.hasDocument)
+
+                Menu {
+                    ForEach(ColorTheme.allCases, id: \.self) { theme in
+                        Button {
+                            viewModel.colorTheme = theme
+                            viewModel.saveDocumentState()
+                        } label: {
+                            if viewModel.colorTheme == theme {
+                                Label(theme.rawValue, systemImage: "checkmark")
+                            } else {
+                                Text(theme.rawValue)
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Color Theme", systemImage: "circle.lefthalf.filled")
+                }
+                .disabled(!viewModel.hasDocument)
+
+                Divider()
+
+                Button {
+                    viewModel.adjustZoom(-0.25)
+                } label: {
+                    Label("Zoom Out", systemImage: "minus.magnifyingglass")
+                }
+                .disabled(!viewModel.hasDocument)
+                Button {
+                    viewModel.adjustZoom(0.25)
+                } label: {
+                    Label("Zoom In", systemImage: "plus.magnifyingglass")
+                }
+                .disabled(!viewModel.hasDocument)
+                Button {
+                    viewModel.zoomToActualSize()
+                } label: {
+                    Label("Actual Size", systemImage: "1.magnifyingglass")
+                }
+                .disabled(!viewModel.hasDocument)
+                Button {
+                    viewModel.fitToHeight(viewportHeight: viewportSize.height)
+                } label: {
+                    Label("Fit to Height", systemImage: "arrow.up.and.down.text.horizontal")
+                }
+                .disabled(!viewModel.hasDocument)
+
+                Divider()
+                Button {
+                    showSettings = true
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
             }
-            .help("Settings")
+            .help("Reading Options")
+            .accessibilityLabel("Reading Options")
             #endif
         }
     }
