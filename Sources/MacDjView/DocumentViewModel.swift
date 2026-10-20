@@ -164,9 +164,30 @@ final class DocumentViewModel {
     func fitToHeight(viewportHeight: CGFloat) {
         guard let document,
               let page = document.pageSize(at: currentPage) else { return }
+        let otherPage: CGSize? = {
+            guard pageLayout == .twoPage, currentPage > 0,
+                  currentPage + 1 < document.pageCount else { return nil }
+            return document.pageSize(at: currentPage + 1)
+        }()
+        let pageHeight = max(page.height, otherPage?.height ?? 0)
         let availableHeight = viewportHeight - 40
-        guard availableHeight > 0, page.height > 0 else { return }
-        zoom = max(0.25, min(4.0, availableHeight / page.height))
+        guard availableHeight > 0, pageHeight > 0 else { return }
+        zoom = max(0.25, min(4.0, availableHeight / pageHeight))
+        handleZoomChanged()
+    }
+
+    func fitToWidth(viewportWidth: CGFloat) {
+        guard let document,
+              let page = document.pageSize(at: currentPage) else { return }
+        let rightSize: CGSize? = {
+            guard pageLayout == .twoPage, currentPage > 0,
+                  currentPage + 1 < document.pageCount else { return nil }
+            return document.pageSize(at: currentPage + 1)
+        }()
+        let totalPageWidth = page.width + (rightSize.map { $0.width + 12 } ?? 0)
+        let availableWidth = viewportWidth - 40
+        guard availableWidth > 0, totalPageWidth > 0 else { return }
+        zoom = max(0.25, min(4.0, availableWidth / totalPageWidth))
         handleZoomChanged()
     }
 
@@ -497,6 +518,7 @@ struct DocumentActions {
     var adjustZoom: (Double) -> Void
     var zoomToActualSize: () -> Void
     var fitToHeight: () -> Void
+    var fitToWidth: () -> Void
     var presentSearch: () -> Void
     var nextSearchMatch: () -> Void
     var previousSearchMatch: () -> Void

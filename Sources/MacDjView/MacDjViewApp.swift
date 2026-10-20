@@ -111,6 +111,12 @@ struct MacDjViewApp: App {
             .keyboardShortcut("0", modifiers: .command)
             .disabled(actions?.hasDocument != true)
 
+            Button("Fit to Width") {
+                actions?.fitToWidth()
+            }
+            .keyboardShortcut("8", modifiers: .command)
+            .disabled(actions?.hasDocument != true)
+
             Button("Fit to Height") {
                 actions?.fitToHeight()
             }

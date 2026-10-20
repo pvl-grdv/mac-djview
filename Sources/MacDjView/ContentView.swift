@@ -25,7 +25,7 @@ struct ContentView: View {
             #if os(macOS)
             .frame(minWidth: 600, minHeight: 400)
             #endif
-            .navigationTitle(viewModel.fileName ?? "MacDjView")
+            .navigationTitle(viewModel.fileName ?? "Open a Book")
             #if os(macOS)
             .navigationSubtitle(viewModel.navigationSubtitleText)
             #endif
@@ -255,6 +255,7 @@ struct ContentView: View {
             Button { viewModel.navigatePage(-1) } label: {
                 Image(systemName: "chevron.left")
             }
+            .accessibilityLabel("Previous Page")
             .disabled(!viewModel.canGoBack)
             .help("Previous Page")
 
@@ -265,33 +266,35 @@ struct ContentView: View {
             Button { viewModel.navigatePage(1) } label: {
                 Image(systemName: "chevron.right")
             }
+            .accessibilityLabel("Next Page")
             .disabled(!viewModel.canGoForward)
             .help("Next Page")
         }
 
         #if os(macOS)
         ToolbarItemGroup(placement: .principal) {
-            Picker("Layout", selection: Binding(
-                get: { viewModel.pageLayout },
-                set: { viewModel.pageLayout = $0 }
-            )) {
-                Label("Single Page", systemImage: "doc").tag(PageLayout.single)
-                Label("Two Pages", systemImage: "book").tag(PageLayout.twoPage)
+            // Common display options belong in one standard menu instead of
+            // permanently occupying the title bar with wide segmented pickers.
+            Menu {
+                Picker("Page Layout", selection: Binding(
+                    get: { viewModel.pageLayout },
+                    set: { viewModel.pageLayout = $0 }
+                )) {
+                    Label("Single Page", systemImage: "doc").tag(PageLayout.single)
+                    Label("Two Pages", systemImage: "book").tag(PageLayout.twoPage)
+                }
+                Picker("Scrolling", selection: Binding(
+                    get: { viewModel.scrollMode },
+                    set: { viewModel.scrollMode = $0 }
+                )) {
+                    Label("Paged", systemImage: "square").tag(ScrollMode.paged)
+                    Label("Continuous", systemImage: "square.3.layers.3d.down.left")
+                        .tag(ScrollMode.continuous)
+                }
+            } label: {
+                Label("Reading Layout", systemImage: "rectangle.split.2x1")
             }
-            .pickerStyle(.segmented)
-            .frame(width: 140)
-            .help("Page Layout")
-
-            Picker("Scroll", selection: Binding(
-                get: { viewModel.scrollMode },
-                set: { viewModel.scrollMode = $0 }
-            )) {
-                Label("Paged", systemImage: "square").tag(ScrollMode.paged)
-                Label("Continuous", systemImage: "square.3.layers.3d.down.left").tag(ScrollMode.continuous)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 160)
-            .help("Scroll Mode")
+            .disabled(!viewModel.hasDocument)
         }
         #endif
 
@@ -380,12 +383,27 @@ struct ContentView: View {
             }
             .help("Zoom In")
 
+            #if os(macOS)
+            Menu {
+                Button("Fit to Width") {
+                    viewModel.fitToWidth(viewportWidth: viewportSize.width)
+                }
+                Button("Fit to Height") {
+                    viewModel.fitToHeight(viewportHeight: viewportSize.height)
+                }
+            } label: {
+                Label("Fit Page", systemImage: "arrow.up.left.and.arrow.down.right")
+            }
+            .help("Fit Page")
+            .disabled(!viewModel.hasDocument)
+            #else
             Button {
                 viewModel.fitToHeight(viewportHeight: viewportSize.height)
             } label: {
                 Image(systemName: "arrow.up.and.down.text.horizontal")
             }
             .help("Fit to Height")
+            #endif
 
             #if !os(macOS)
             Button { showSettings = true } label: {
@@ -472,6 +490,7 @@ struct ContentView: View {
             adjustZoom: { viewModel.adjustZoom($0) },
             zoomToActualSize: { viewModel.zoomToActualSize() },
             fitToHeight: { viewModel.fitToHeight(viewportHeight: viewportSize.height) },
+            fitToWidth: { viewModel.fitToWidth(viewportWidth: viewportSize.width) },
             presentSearch: { isSearchPresented = true },
             nextSearchMatch: { viewModel.nextSearchMatch() },
             previousSearchMatch: { viewModel.previousSearchMatch() },
