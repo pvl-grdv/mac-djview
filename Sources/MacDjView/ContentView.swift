@@ -2,13 +2,23 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
+    let initialURL: URL?
+
+    init(initialURL: URL? = nil) {
+        self.initialURL = initialURL
+    }
+
     @State private var viewModel = DocumentViewModel()
     @State private var viewportSize: CGSize = .zero
     @State private var isSearchPresented = false
     #if !os(macOS)
     @State private var showSettings = false
     #endif
-    private var openURLHandler = OpenURLHandler.shared
+    private let openURLHandler = OpenURLHandler.shared
+
+    #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    #endif
 
     var body: some View {
         contentArea
@@ -60,10 +70,16 @@ struct ContentView: View {
             .onChange(of: viewModel.zoom) { _, _ in
                 viewModel.saveDocumentState()
             }
-            .onChange(of: openURLHandler.pendingURL) { _, url in
-                guard let url else { return }
-                viewModel.loadDocument(url: url)
-                openURLHandler.pendingURL = nil
+            .onAppear {
+                routePendingFileOpens()
+            }
+            .task(id: initialURL) {
+                if let initialURL {
+                    viewModel.loadDocument(url: initialURL)
+                }
+            }
+            .onChange(of: openURLHandler.pendingURLs) { _, _ in
+                routePendingFileOpens()
             }
             #if !os(macOS)
             .sheet(isPresented: $showSettings) {
@@ -77,6 +93,19 @@ struct ContentView: View {
                 }
             }
             #endif
+    }
+
+    private func routePendingFileOpens() {
+        let urls = openURLHandler.takePendingURLs()
+        #if os(macOS)
+        for url in urls {
+            openWindow(value: url)
+        }
+        #else
+        if let url = urls.last {
+            viewModel.loadDocument(url: url)
+        }
+        #endif
     }
 
     // MARK: - Content Area

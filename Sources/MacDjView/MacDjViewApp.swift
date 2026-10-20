@@ -27,11 +27,18 @@ struct MacDjViewApp: App {
                 ContentView()
             }
             .onOpenURL { url in
-                OpenURLHandler.shared.pendingURL = url
+                OpenURLHandler.shared.enqueue([url])
             }
             #endif
         }
         #if os(macOS)
+        // Finder documents open in their own windows instead of replacing
+        // an already open book. The value is used for window restoration.
+        WindowGroup("Document", for: URL.self) { documentURL in
+            if let url = documentURL.wrappedValue {
+                ContentView(initialURL: url)
+            }
+        }
         .commands {
             fileCommands
             findCommands
