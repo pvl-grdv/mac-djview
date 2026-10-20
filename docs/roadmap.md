@@ -5,7 +5,8 @@ This document tracks product/platform work for the independent MacDjView downstr
 ## Supported platforms
 
 - macOS 14+ on Apple Silicon (`arm64` only).
-- iOS/iPadOS 17+.
+- iOS/iPadOS 17+ (iPad Pro 10.5-inch does not support iPadOS 18).
+- macOS has a SwiftPM packaging script; iPadOS has a native Xcode app target and Personal Team installation path.
 - CI should use the current Xcode/SDK without raising deployment targets unless the source actually requires newer APIs.
 - Prefer native Apple frameworks and standard SwiftUI/AppKit integration before custom platform code.
 
@@ -13,6 +14,8 @@ This document tracks product/platform work for the independent MacDjView downstr
 
 Completed:
 
+- Dedicated Xcode iPad app target (iPadOS 17 floor) and free Apple Account installation instructions.
+- CBR (RAR/RAR5) reading and native DjVu/CBR file registration.
 - DjVu UTI declaration: `org.djvu.djvu`, `.djvu` / `.djv`, `image/vnd.djvu`.
 - Bounded `TXTa` / `TXTz` decoding using the existing BZZ decoder.
 - UTF-8 byte ranges and DjVu text-zone coordinates.
@@ -23,6 +26,7 @@ Completed:
 
 Next major work:
 
+0. Manual CBR smoke test on a physical iPad Pro 10.5-inch, including memory pressure and device rotation.
 1. Vision OCR fallback for pages without embedded text.
 2. Modern macOS toolbar/search presentation with macOS 14 fallback.
 3. macOS Spotlight content importer.

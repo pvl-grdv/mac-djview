@@ -1,6 +1,6 @@
 # MacDjView
 
-MacDjView is a native macOS/iOS DjVu document viewer written in Swift. The app contains a pure-Swift DjVu decoder with no third-party runtime dependencies and uses Apple frameworks for the UI and platform integration.
+MacDjView is a native macOS/iPadOS reader for DjVu documents and CBR comics. DjVu decoding is implemented in pure Swift; CBR support uses the Unrar Swift package. The UI uses Apple's SwiftUI and ImageIO frameworks.
 
 This repository is maintained as an independent downstream product. See [Product direction](docs/product-direction.md) and the [Platform integration roadmap](docs/roadmap.md).
 
@@ -27,7 +27,7 @@ Not implemented yet: Vision OCR fallback, Spotlight content importer, Quick Look
 ## Requirements
 
 - macOS 14 (Sonoma) or later on Apple Silicon (`arm64`).
-- iOS/iPadOS 17 or later.
+- iOS/iPadOS 17 or later, including iPad Pro 10.5-inch (2017).
 - Swift tools 5.10+.
 - CBR handling uses the SwiftPM `Unrar.swift` dependency and its bundled UnRAR decompressor;
   see the dependency's distinct UnRAR license terms. DjVu decoding remains dependency-free.
@@ -51,11 +51,17 @@ swift run MacDjView
 ./scripts/make-app-bundle.sh
 ```
 
-You can also open `Package.swift` in Xcode.
+### macOS
 
-For iOS/iPadOS, open `Package.swift` in Xcode, select an iPhone or iPad destination, and build. CI verifies an arm64 physical-device compile with the iOS/iPadOS 17 deployment target. Installing on a physical device requires Apple development signing/provisioning.
+Use `Package.swift` for SwiftPM testing and the macOS build script above to make the app bundle. The GitHub Actions workflow produces a macOS arm64 archive on successful runs.
 
-Once installed on iPad, tap the folder button in the toolbar and select a `.cbr` book in Files. On macOS use **File → Open…** or drop a CBR into the reader. The current GitHub release workflow only packages the macOS app; it does not publish a signed iPadOS app or TestFlight build.
+### iPadOS (no paid Apple Developer membership needed)
+
+**Open [ios/MacDjView-iOS.xcodeproj](ios/MacDjView-iOS.xcodeproj) in Xcode 27** and choose the shared **MacDjView-iPad** scheme. This is an actual iPad/iPhone app target; building the `Package.swift` executable by itself does **not** produce an installable iOS app. The project shares the Swift source files with the macOS SwiftPM target.
+
+To run it on your own iPad: add your Apple Account in Xcode Settings → Accounts, select your **Personal Team** under Signing & Capabilities, connect the unlocked iPad and trust your Mac, select it as the run destination, and press **Run (⌘R)**. Enable Developer Mode on the iPad if prompted. A Personal Team app must be re-provisioned/reinstalled after seven days. Details and troubleshooting: [Install on iPad without a paid account](docs/ipad-installation.md).
+
+Once installed, tap the folder button and select a `.cbr` or `.djvu` book from Files. On Mac use **File → Open…** or drop a file into the reader. CI verifies an **unsigned** iPadOS 17-compatible `.app` bundle; it cannot sign for your Personal Team and does not publish a usable `.ipa` or TestFlight build.
 
 ## macOS releases and Gatekeeper
 
@@ -90,7 +96,9 @@ make unit-test
 
 Tests cover binary bounds checking, decoder safety limits, IFF parsing, wavelet and compositor behavior, embedded DjVu text decoding, Unicode/text-zone handling, and document search.
 
-CI runs on pushes to `main` and pull requests. The macOS job runs unit tests, builds the arm64 app, verifies sandbox entitlements, and packages the release artifact. CI also compiles the iOS/iPadOS target.
+CI runs for pull requests, pushes to `main`, and version tags. The macOS job runs unit tests, builds the arm64 app, validates sandbox entitlements, and packages the release artifact. The iPadOS job builds an actual unsigned `.app` for arm64 and verifies its `MinimumOSVersion = 17.0` and DjVu/CBR file type registrations. PR builds are cancellable when superseded. Only macOS is published in Releases; the iPad app is locally signed with a free Apple Account.
+
+[Compatibility and WWDC24–26 choices](docs/compatibility.md) explains which APIs we intentionally use and why we keep older OS fallbacks.
 
 ## CLI decode/performance testing
 
@@ -130,6 +138,7 @@ Sources/MacDjView/
     ├── JB2*.swift            # JB2 bitmap/symbol decoding
     └── PageCompositor.swift  # Layer composition to CGImage
 
+ios/MacDjView-iOS.xcodeproj/ # iPadOS app target (Personal Team signing)
 Resources/AppIcon.icon/       # Icon Composer source
 Tests/MacDjViewTests/         # Decoder, safety, text, search, rendering tests
 docs/                         # Architecture, project direction, roadmap, conventions
