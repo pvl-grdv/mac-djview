@@ -267,6 +267,16 @@ struct ContentView: View {
         #endif
 
         ToolbarItemGroup(placement: .automatic) {
+            #if !os(macOS)
+            Button {
+                viewModel.showFileImporter = true
+            } label: {
+                Image(systemName: "folder")
+            }
+            .help("Open DjVu or CBR")
+            .accessibilityLabel("Open Document")
+            #endif
+
             if !viewModel.searchResultText.isEmpty {
                 Text(viewModel.searchResultText)
                     .monospacedDigit()

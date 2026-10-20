@@ -20,11 +20,15 @@ struct MacDjViewApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if os(macOS)
             ContentView()
-            #if !os(macOS)
-                .onOpenURL { url in
-                    OpenURLHandler.shared.pendingURL = url
-                }
+            #else
+            NavigationStack {
+                ContentView()
+            }
+            .onOpenURL { url in
+                OpenURLHandler.shared.pendingURL = url
+            }
             #endif
         }
         #if os(macOS)

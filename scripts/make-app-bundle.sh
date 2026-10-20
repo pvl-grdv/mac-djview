@@ -134,6 +134,21 @@ cat > "$APP_DIR/Info.plist" <<PLIST
                 <string>image/vnd.djvu</string>
             </dict>
         </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.mac-djview.comic-rar</string>
+            <key>UTTypeDescription</key>
+            <string>CBR Comic Archive</string>
+            <key>UTTypeConformsTo</key>
+            <array><string>public.archive</string></array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array><string>cbr</string></array>
+                <key>public.mime-type</key>
+                <string>application/vnd.comicbook-rar</string>
+            </dict>
+        </dict>
     </array>
     <key>CFBundleDocumentTypes</key>
     <array>
@@ -152,6 +167,16 @@ cat > "$APP_DIR/Info.plist" <<PLIST
                 <string>djv</string>
             </array>
         </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>CBR Comic Archive</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSItemContentTypes</key>
+            <array><string>com.mac-djview.comic-rar</string></array>
+            <key>CFBundleTypeExtensions</key>
+            <array><string>cbr</string></array>
+        </dict>
     </array>
 </dict>
 </plist>
@@ -162,6 +187,7 @@ test "$(plutil -extract CFBundleIconName raw "$APP_DIR/Info.plist")" = "$APP_ICO
 test "$(plutil -extract CFBundleIconFile raw "$APP_DIR/Info.plist")" = "$APP_ICON_NAME"
 test "$(plutil -extract UTImportedTypeDeclarations.0.UTTypeIdentifier raw "$APP_DIR/Info.plist")" = "org.djvu.djvu"
 test "$(/usr/libexec/PlistBuddy -c 'Print :UTImportedTypeDeclarations:0:UTTypeTagSpecification:public.mime-type' "$APP_DIR/Info.plist")" = "image/vnd.djvu"
+test "$(plutil -extract UTImportedTypeDeclarations.1.UTTypeIdentifier raw "$APP_DIR/Info.plist")" = "com.mac-djview.comic-rar"
 
 # Ad-hoc signing is sufficient for local/testing builds and preserves the
 # restrictive App Sandbox entitlements. Internet-downloaded builds will not

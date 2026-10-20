@@ -66,6 +66,7 @@ jobs:
           test "$(plutil -extract LSMinimumSystemVersion raw MacDjView.app/Contents/Info.plist)" = "14.0"
           test "$(plutil -extract CFBundleIconName raw MacDjView.app/Contents/Info.plist)" = "AppIcon"
           test "$(plutil -extract CFBundleIconFile raw MacDjView.app/Contents/Info.plist)" = "AppIcon"
+          test "$(plutil -extract UTImportedTypeDeclarations.1.UTTypeIdentifier raw MacDjView.app/Contents/Info.plist)" = "com.mac-djview.comic-rar"
           test -f MacDjView.app/Contents/Resources/PrivacyInfo.xcprivacy
           test -s MacDjView.app/Contents/Resources/Assets.car
           test -s MacDjView.app/Contents/Resources/AppIcon.icns

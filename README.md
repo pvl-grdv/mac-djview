@@ -10,6 +10,8 @@ This repository is maintained as an independent downstream product. See [Product
 
 - Pure-Swift DjVu decoding: IFF, BZZ, ZP-Coder, IW44, JB2, palettes, shared dictionaries, and page composition.
 - Multi-page documents with single-page, two-page, paged, and continuous viewing modes.
+- Read-only CBR comic support (RAR/RAR5 with JPEG, PNG, and other ImageIO images), including on iPad.
+  CBR files are read lazily; encrypted and multi-volume archives are not supported.
 - App Sandbox with read-only access to user-selected files and no network entitlement.
 - Apple Silicon macOS application bundle (`arm64` only).
 - Imported DjVu type declaration: `org.djvu.djvu` for `.djvu` / `.djv` and `image/vnd.djvu`.
@@ -27,6 +29,8 @@ Not implemented yet: Vision OCR fallback, Spotlight content importer, Quick Look
 - macOS 14 (Sonoma) or later on Apple Silicon (`arm64`).
 - iOS/iPadOS 17 or later.
 - Swift tools 5.10+.
+- CBR handling uses the SwiftPM `Unrar.swift` dependency and its bundled UnRAR decompressor;
+  see the dependency's distinct UnRAR license terms. DjVu decoding remains dependency-free.
 - Full Xcode is required for the packaged macOS app because the Icon Composer source is compiled with `actool`.
 
 CI can use newer Xcode/SDK releases without raising the deployment targets unless the source actually adopts APIs that require a newer OS.
