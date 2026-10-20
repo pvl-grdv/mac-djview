@@ -26,9 +26,10 @@ private struct DocumentState: Codable {
     var colorTheme: String?
 }
 
+@MainActor
 @Observable
 final class DocumentViewModel {
-    var document: DjVuDocument?
+    var document: (any PageDocument)?
     var currentPage = 0
     var pageImage: PlatformImage?
     var rightPageImage: PlatformImage?
@@ -52,7 +53,9 @@ final class DocumentViewModel {
     let pageCache = PageCache()
 
     private var renderTask: Task<Void, Never>?
+    private var loadTask: Task<Void, Never>?
     private var searchTask: Task<Void, Never>?
+    private var documentGeneration = 0
 
     var hasDocument: Bool { document != nil }
     var pageCount: Int { document?.pageCount ?? 0 }
@@ -158,11 +161,11 @@ final class DocumentViewModel {
     }
 
     func fitToHeight(viewportHeight: CGFloat) {
-        guard let document else { return }
-        let page = document.pages[currentPage]
+        guard let document,
+              let page = document.pageSize(at: currentPage) else { return }
         let availableHeight = viewportHeight - 40
         guard availableHeight > 0, page.height > 0 else { return }
-        zoom = max(0.25, min(4.0, availableHeight / CGFloat(page.height)))
+        zoom = max(0.25, min(4.0, availableHeight / page.height))
         handleZoomChanged()
     }
 
@@ -207,20 +210,27 @@ final class DocumentViewModel {
             isSearching = false
             return
         }
+        guard let djvu = document as? DjVuDocument else {
+            isSearching = false
+            searchErrorMessage = "Text search in CBR is not available yet"
+            return
+        }
 
+        let generation = documentGeneration
         isSearching = true
-        searchTask = Task { [weak self, document] in
+        searchTask = Task { [weak self, djvu] in
             do {
                 try await Task.sleep(for: .milliseconds(180))
                 try Task.checkCancellation()
 
                 let matches = try await Task.detached(priority: .userInitiated) {
-                    try DjVuSearchEngine.search(document: document, query: trimmed)
+                    try DjVuSearchEngine.search(document: djvu, query: trimmed)
                 }.value
                 try Task.checkCancellation()
 
                 await MainActor.run {
-                    guard let self, self.searchQuery == query else { return }
+                    guard let self, self.documentGeneration == generation,
+                          self.searchQuery == query else { return }
                     self.searchMatches = matches
                     self.selectedSearchMatchIndex = matches.isEmpty ? nil : 0
                     self.isSearching = false
@@ -232,7 +242,8 @@ final class DocumentViewModel {
                 // Superseded by a newer query.
             } catch {
                 await MainActor.run {
-                    guard let self, self.searchQuery == query else { return }
+                    guard let self, self.documentGeneration == generation,
+                          self.searchQuery == query else { return }
                     self.searchMatches = []
                     self.selectedSearchMatchIndex = nil
                     self.searchErrorMessage = error.localizedDescription
@@ -274,6 +285,13 @@ final class DocumentViewModel {
     }
 
     func loadDocument(url: URL) {
+        documentGeneration += 1
+        let generation = documentGeneration
+        loadTask?.cancel()
+        renderTask?.cancel()
+        searchTask?.cancel()
+
+        document = nil
         isLoading = true
         errorMessage = nil
         pageImage = nil
@@ -281,55 +299,62 @@ final class DocumentViewModel {
         fileName = url.lastPathComponent
         documentURL = url
         pageCache.removeAll()
-        searchTask?.cancel()
         searchQuery = ""
         searchMatches = []
         selectedSearchMatchIndex = nil
         isSearching = false
         searchErrorMessage = nil
 
-        renderTask?.cancel()
-        renderTask = Task {
+        loadTask = Task { [weak self] in
             do {
-                let hasSecurityScope = url.startAccessingSecurityScopedResource()
-                defer {
-                    if hasSecurityScope {
-                        url.stopAccessingSecurityScopedResource()
+                let doc = try await Task.detached(priority: .userInitiated) {
+                    () throws -> any PageDocument in
+                    switch url.pathExtension.lowercased() {
+                    case "cbr":
+                        return try ComicArchiveDocument(url: url)
+                    case "djvu", "djv":
+                        let scoped = url.startAccessingSecurityScopedResource()
+                        defer {
+                            if scoped { url.stopAccessingSecurityScopedResource() }
+                        }
+                        let data = try SafeFileLoader.read(url: url)
+                        return try DjVuDocument(data: data)
+                    default:
+                        throw ComicArchiveError.unsupportedFormat
                     }
-                }
+                }.value
+                try Task.checkCancellation()
+                guard let self, self.documentGeneration == generation else { return }
 
-                let data = try SafeFileLoader.read(url: url)
-                let doc = try DjVuDocument(data: data)
-                await MainActor.run {
-                    self.document = doc
-                    if let saved = self.restoreDocumentState() {
-                        self.currentPage = min(max(saved.currentPage, 0), doc.pageCount - 1)
-                        self.zoom = saved.zoom.isFinite ? max(0.25, min(4.0, saved.zoom)) : 1.0
-                        if let layout = PageLayout(rawValue: saved.pageLayout) {
-                            self.pageLayout = layout
-                        }
-                        if let mode = ScrollMode(rawValue: saved.scrollMode) {
-                            self.scrollMode = mode
-                        }
-                        if let theme = saved.colorTheme.flatMap({ ColorTheme(rawValue: $0) }) {
-                            self.colorTheme = theme
-                        }
-                    } else {
-                        self.currentPage = 0
-                        self.zoom = 1.0
+                self.document = doc
+                if let saved = self.restoreDocumentState() {
+                    self.currentPage = min(max(saved.currentPage, 0), doc.pageCount - 1)
+                    self.zoom = saved.zoom.isFinite ? max(0.25, min(4.0, saved.zoom)) : 1.0
+                    if let layout = PageLayout(rawValue: saved.pageLayout) {
+                        self.pageLayout = layout
                     }
-                    if self.scrollMode == .paged {
-                        self.renderCurrentPage()
-                    } else {
-                        self.scrollTarget = self.currentPage
-                        self.isLoading = false
+                    if let mode = ScrollMode(rawValue: saved.scrollMode) {
+                        self.scrollMode = mode
                     }
+                    if let theme = saved.colorTheme.flatMap({ ColorTheme(rawValue: $0) }) {
+                        self.colorTheme = theme
+                    }
+                } else {
+                    self.currentPage = 0
+                    self.zoom = 1.0
                 }
-            } catch {
-                await MainActor.run {
-                    self.errorMessage = "Failed to open: \(error.localizedDescription)"
+                if self.scrollMode == .paged {
+                    self.renderCurrentPage()
+                } else {
+                    self.scrollTarget = self.currentPage
                     self.isLoading = false
                 }
+            } catch is CancellationError {
+                // A newer document was selected.
+            } catch {
+                guard let self, self.documentGeneration == generation else { return }
+                self.errorMessage = "Failed to open: \(error.localizedDescription)"
+                self.isLoading = false
             }
         }
     }
@@ -337,6 +362,7 @@ final class DocumentViewModel {
     func renderCurrentPage() {
         guard let document else { return }
 
+        let generation = documentGeneration
         let pageIndex = currentPage
         let currentZoom = zoom
         let zoomPercent = Int(currentZoom * 100)
@@ -376,6 +402,8 @@ final class DocumentViewModel {
                         document: document, pageIndex: pageIndex, scale: currentZoom
                     )
                     try Task.checkCancellation()
+                    try Task.checkCancellation()
+                    guard generation == documentGeneration else { return }
                     pageCache.store(leftImage, forPage: pageIndex, zoom: zoomPercent)
                 }
 
@@ -388,6 +416,8 @@ final class DocumentViewModel {
                             document: document, pageIndex: ri, scale: currentZoom
                         )
                         try Task.checkCancellation()
+                        try Task.checkCancellation()
+                        guard generation == documentGeneration else { return }
                         pageCache.store(img, forPage: ri, zoom: zoomPercent)
                         renderedRight = img
                     }
@@ -396,6 +426,7 @@ final class DocumentViewModel {
                 }
 
                 await MainActor.run {
+                    guard self.documentGeneration == generation else { return }
                     self.pageImage = leftImage
                     self.rightPageImage = renderedRight
                     self.isLoading = false
@@ -404,6 +435,7 @@ final class DocumentViewModel {
                 // Cancelled by new render — ignore
             } catch {
                 await MainActor.run {
+                    guard self.documentGeneration == generation else { return }
                     self.errorMessage = "Decode error: \(error.localizedDescription)"
                     self.isLoading = false
                 }

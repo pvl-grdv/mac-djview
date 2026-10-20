@@ -100,8 +100,8 @@ struct PageImageView: View {
                 highlightRects: highlightRects
             )
             .frame(
-                width: image.size.width * zoom,
-                height: image.size.height * zoom
+                width: pageSize.width * zoom,
+                height: pageSize.height * zoom
             )
             .padding(20)
         }
@@ -157,8 +157,8 @@ struct TwoPageView: View {
             )
         }
         .frame(
-            width: image.size.width * zoom,
-            height: image.size.height * zoom
+            width: nativePageSize.width * zoom,
+            height: nativePageSize.height * zoom
         )
     }
 }
@@ -198,7 +198,7 @@ final class PageCache {
         cache.removeAllObjects()
     }
 
-    func render(document: DjVuDocument, pageIndex: Int, scale: Double) async throws -> PlatformImage {
+    func render(document: any PageDocument, pageIndex: Int, scale: Double) async throws -> PlatformImage {
         let token = RenderToken()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { cont in
@@ -233,7 +233,7 @@ final class PageCache {
 // MARK: - ContinuousPageView
 
 struct ContinuousPageView: View {
-    let document: DjVuDocument
+    let document: any PageDocument
     let zoom: Double
     let pageCache: PageCache
     var colorTheme: ColorTheme = .normal
@@ -277,7 +277,7 @@ struct ContinuousPageView: View {
 // MARK: - ContinuousTwoPageView
 
 struct ContinuousTwoPageView: View {
-    let document: DjVuDocument
+    let document: any PageDocument
     let zoom: Double
     let pageCache: PageCache
     var colorTheme: ColorTheme = .normal
@@ -354,7 +354,7 @@ struct ContinuousTwoPageView: View {
 // MARK: - ContinuousPageSlot
 
 struct ContinuousPageSlot: View {
-    let document: DjVuDocument
+    let document: any PageDocument
     let pageIndex: Int
     let zoom: Double
     let pageCache: PageCache
@@ -364,20 +364,12 @@ struct ContinuousPageSlot: View {
     @State private var image: PlatformImage?
     @State private var error: String?
 
-    private var pageWidth: CGFloat {
-        CGFloat(document.pages[pageIndex].width) * zoom
-    }
-
-    private var pageHeight: CGFloat {
-        CGFloat(document.pages[pageIndex].height) * zoom
-    }
-
     private var nativePageSize: CGSize {
-        CGSize(
-            width: CGFloat(document.pages[pageIndex].width),
-            height: CGFloat(document.pages[pageIndex].height)
-        )
+        document.pageSize(at: pageIndex) ?? image?.size ?? CGSize(width: 900, height: 1300)
     }
+
+    private var pageWidth: CGFloat { nativePageSize.width * zoom }
+    private var pageHeight: CGFloat { nativePageSize.height * zoom }
 
     var body: some View {
         ZStack {

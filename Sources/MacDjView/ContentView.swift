@@ -32,7 +32,7 @@ struct ContentView: View {
             .safeAreaInset(edge: .bottom) { statusBar }
             .fileImporter(
                 isPresented: $viewModel.showFileImporter,
-                allowedContentTypes: djvuContentTypes
+                allowedContentTypes: supportedContentTypes
             ) { result in
                 if case .success(let url) = result {
                     viewModel.loadDocument(url: url)
@@ -40,7 +40,7 @@ struct ContentView: View {
             }
             .dropDestination(for: URL.self) { urls, _ in
                 guard let url = urls.first,
-                      ["djvu", "djv"].contains(url.pathExtension.lowercased())
+                      ["djvu", "djv", "cbr"].contains(url.pathExtension.lowercased())
                 else { return false }
                 viewModel.loadDocument(url: url)
                 return true
@@ -100,7 +100,7 @@ struct ContentView: View {
                             Image(systemName: "doc.richtext")
                                 .font(.system(size: 48))
                                 .foregroundStyle(.secondary)
-                            Text("Open a DjVu file to begin")
+                            Text("Open a DjVu or CBR file to begin")
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -267,6 +267,16 @@ struct ContentView: View {
         #endif
 
         ToolbarItemGroup(placement: .automatic) {
+            #if !os(macOS)
+            Button {
+                viewModel.showFileImporter = true
+            } label: {
+                Image(systemName: "folder")
+            }
+            .help("Open DjVu or CBR")
+            .accessibilityLabel("Open Document")
+            #endif
+
             if !viewModel.searchResultText.isEmpty {
                 Text(viewModel.searchResultText)
                     .monospacedDigit()
@@ -371,17 +381,18 @@ struct ContentView: View {
                 }
 
                 Spacer()
-                let page = document.pages[viewModel.currentPage]
-                if viewModel.pageLayout == .twoPage, viewModel.currentPage > 0,
-                   viewModel.currentPage + 1 < document.pageCount {
-                    let right = document.pages[viewModel.currentPage + 1]
-                    Text("L: \(page.width)\u{00D7}\(page.height)  R: \(right.width)\u{00D7}\(right.height) @ \(page.dpi) DPI")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("\(page.width)\u{00D7}\(page.height) @ \(page.dpi) DPI")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                if let left = pageDescription(at: viewModel.currentPage) {
+                    if viewModel.pageLayout == .twoPage, viewModel.currentPage > 0,
+                       viewModel.currentPage + 1 < document.pageCount,
+                       let right = pageDescription(at: viewModel.currentPage + 1) {
+                        Text("L: \(left)  R: \(right)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(left)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .padding(.horizontal, 8)
@@ -399,15 +410,28 @@ struct ContentView: View {
         )
     }
 
-    private var djvuContentTypes: [UTType] {
-        [.djvu]
+    private var supportedContentTypes: [UTType] {
+        #if os(macOS)
+        [.djvu, .comicRAR]
+        #else
+        // Some Files providers classify .cbr as generic data instead of the
+        // imported CBR type. Keep these files selectable on iPad.
+        [.djvu, .comicRAR, .data]
+        #endif
     }
 
     private func nativePageSize(at index: Int) -> CGSize? {
+        viewModel.document?.pageSize(at: index)
+    }
+
+    private func pageDescription(at index: Int) -> String? {
         guard let document = viewModel.document,
-              document.pages.indices.contains(index) else { return nil }
-        let page = document.pages[index]
-        return CGSize(width: page.width, height: page.height)
+              let size = document.pageSize(at: index) else { return nil }
+        let dimensions = "\(Int(size.width))×\(Int(size.height))"
+        if let dpi = document.pageDPI(at: index) {
+            return "\(dimensions) @ \(dpi) DPI"
+        }
+        return dimensions
     }
 
     #if os(macOS)
