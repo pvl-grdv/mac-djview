@@ -32,18 +32,19 @@ struct MacDjViewApp: App {
             #endif
         }
         #if os(macOS)
+        .commands {
+            fileCommands
+            findCommands
+            viewCommands
+            goCommands
+        }
+
         // Finder documents open in their own windows instead of replacing
         // an already open book. The value is used for window restoration.
         WindowGroup("Document", for: URL.self) { documentURL in
             if let url = documentURL.wrappedValue {
                 ContentView(initialURL: url)
             }
-        }
-        .commands {
-            fileCommands
-            findCommands
-            viewCommands
-            goCommands
         }
         #endif
 
