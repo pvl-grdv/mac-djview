@@ -411,7 +411,13 @@ struct ContentView: View {
     }
 
     private var supportedContentTypes: [UTType] {
+        #if os(macOS)
         [.djvu, .comicRAR]
+        #else
+        // Some Files providers classify .cbr as generic data instead of the
+        // imported CBR type. Keep these files selectable on iPad.
+        [.djvu, .comicRAR, .data]
+        #endif
     }
 
     private func nativePageSize(at index: Int) -> CGSize? {

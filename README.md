@@ -55,6 +55,8 @@ You can also open `Package.swift` in Xcode.
 
 For iOS/iPadOS, open `Package.swift` in Xcode, select an iPhone or iPad destination, and build. CI verifies an arm64 physical-device compile with the iOS/iPadOS 17 deployment target. Installing on a physical device requires Apple development signing/provisioning.
 
+Once installed on iPad, tap the folder button in the toolbar and select a `.cbr` book in Files. On macOS use **File → Open…** or drop a CBR into the reader. The current GitHub release workflow only packages the macOS app; it does not publish a signed iPadOS app or TestFlight build.
+
 ## macOS releases and Gatekeeper
 
 GitHub release builds contain an Apple Silicon `MacDjView-macOS-arm64.app.zip` plus a SHA-256 checksum. The app is ad-hoc signed with App Sandbox entitlements, but is not Developer ID notarized.
