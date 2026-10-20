@@ -364,12 +364,16 @@ struct ContinuousPageSlot: View {
     @State private var image: PlatformImage?
     @State private var error: String?
 
-    private var nativePageSize: CGSize {
-        document.pageSize(at: pageIndex) ?? image?.size ?? CGSize(width: 900, height: 1300)
+    private var layoutPageSize: CGSize {
+        document.continuousPageSize(at: pageIndex) ?? CGSize(width: 900, height: 1300)
     }
 
-    private var pageWidth: CGFloat { nativePageSize.width * zoom }
-    private var pageHeight: CGFloat { nativePageSize.height * zoom }
+    private var nativePageSize: CGSize {
+        document.pageSize(at: pageIndex) ?? image?.size ?? layoutPageSize
+    }
+
+    private var pageWidth: CGFloat { layoutPageSize.width * zoom }
+    private var pageHeight: CGFloat { layoutPageSize.height * zoom }
 
     var body: some View {
         ZStack {
@@ -377,12 +381,22 @@ struct ContinuousPageSlot: View {
                 .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
 
             if let image {
-                SearchablePageImage(
-                    image: image,
-                    colorTheme: colorTheme,
-                    nativePageSize: nativePageSize,
-                    highlightRects: highlightRects
-                )
+                if document.prefersUniformPageSlots {
+                    // Keep every CBR slot the same size, preserving the actual
+                    // image's aspect ratio with letterboxing rather than shifting
+                    // adjacent pages when its dimensions become known.
+                    Image(platformImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .applyColorTheme(colorTheme)
+                } else {
+                    SearchablePageImage(
+                        image: image,
+                        colorTheme: colorTheme,
+                        nativePageSize: nativePageSize,
+                        highlightRects: highlightRects
+                    )
+                }
             } else if let error {
                 VStack {
                     Image(systemName: "exclamationmark.triangle")
@@ -396,18 +410,20 @@ struct ContinuousPageSlot: View {
             }
         }
         .frame(width: pageWidth, height: pageHeight)
-        .task(id: TaskKey(pageIndex: pageIndex, zoom: zoom)) {
+        .task(id: TaskKey(pageIndex: pageIndex,
+                          renderScale: PageRenderScale.forZoom(zoom))) {
             await loadImage()
         }
     }
 
     private struct TaskKey: Equatable {
         let pageIndex: Int
-        let zoom: Double
+        let renderScale: Double
     }
 
     private func loadImage() async {
-        let zoomPercent = Int(zoom * 100)
+        let renderScale = PageRenderScale.forZoom(zoom)
+        let zoomPercent = Int(renderScale * 100)
 
         if let cached = pageCache.image(forPage: pageIndex, zoom: zoomPercent) {
             self.image = cached
@@ -419,7 +435,7 @@ struct ContinuousPageSlot: View {
 
         let doc = document
         let idx = pageIndex
-        let scale = zoom
+        let scale = renderScale
 
         do {
             let nsImage = try await pageCache.render(

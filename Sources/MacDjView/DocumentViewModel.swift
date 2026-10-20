@@ -56,6 +56,7 @@ final class DocumentViewModel {
     private var loadTask: Task<Void, Never>?
     private var searchTask: Task<Void, Never>?
     private var documentGeneration = 0
+    private var renderRevision = 0
 
     var hasDocument: Bool { document != nil }
     var pageCount: Int { document?.pageCount ?? 0 }
@@ -163,9 +164,30 @@ final class DocumentViewModel {
     func fitToHeight(viewportHeight: CGFloat) {
         guard let document,
               let page = document.pageSize(at: currentPage) else { return }
+        let otherPage: CGSize? = {
+            guard pageLayout == .twoPage, currentPage > 0,
+                  currentPage + 1 < document.pageCount else { return nil }
+            return document.pageSize(at: currentPage + 1)
+        }()
+        let pageHeight = max(page.height, otherPage?.height ?? 0)
         let availableHeight = viewportHeight - 40
-        guard availableHeight > 0, page.height > 0 else { return }
-        zoom = max(0.25, min(4.0, availableHeight / page.height))
+        guard availableHeight > 0, pageHeight > 0 else { return }
+        zoom = max(0.25, min(4.0, availableHeight / pageHeight))
+        handleZoomChanged()
+    }
+
+    func fitToWidth(viewportWidth: CGFloat) {
+        guard let document,
+              let page = document.pageSize(at: currentPage) else { return }
+        let rightSize: CGSize? = {
+            guard pageLayout == .twoPage, currentPage > 0,
+                  currentPage + 1 < document.pageCount else { return nil }
+            return document.pageSize(at: currentPage + 1)
+        }()
+        let totalPageWidth = page.width + (rightSize.map { $0.width + 12 } ?? 0)
+        let availableWidth = viewportWidth - 40
+        guard availableWidth > 0, totalPageWidth > 0 else { return }
+        zoom = max(0.25, min(4.0, availableWidth / totalPageWidth))
         handleZoomChanged()
     }
 
@@ -194,6 +216,9 @@ final class DocumentViewModel {
         if scrollMode == .paged {
             renderCurrentPage()
         } else {
+            renderRevision += 1
+            renderTask?.cancel()
+            isLoading = false
             scrollTarget = currentPage
         }
     }
@@ -286,6 +311,7 @@ final class DocumentViewModel {
 
     func loadDocument(url: URL) {
         documentGeneration += 1
+        renderRevision += 1
         let generation = documentGeneration
         loadTask?.cancel()
         renderTask?.cancel()
@@ -362,10 +388,16 @@ final class DocumentViewModel {
     func renderCurrentPage() {
         guard let document else { return }
 
+        // Invalidate every previous render (including tasks that are about to
+        // hit the cache fast path), not only when a new async render starts.
+        renderRevision += 1
+        let revision = renderRevision
+        renderTask?.cancel()
+
         let generation = documentGeneration
         let pageIndex = currentPage
-        let currentZoom = zoom
-        let zoomPercent = Int(currentZoom * 100)
+        let renderScale = PageRenderScale.forZoom(zoom)
+        let zoomPercent = Int(renderScale * 100)
 
         let rightIndex: Int? = {
             guard pageLayout == .twoPage, pageIndex > 0,
@@ -391,21 +423,25 @@ final class DocumentViewModel {
         isLoading = true
         errorMessage = nil
 
-        renderTask?.cancel()
         renderTask = Task {
             do {
+                try Task.checkCancellation()
                 let leftImage: PlatformImage
                 if let cached = pageCache.image(forPage: pageIndex, zoom: zoomPercent) {
                     leftImage = cached
                 } else {
                     leftImage = try await pageCache.render(
-                        document: document, pageIndex: pageIndex, scale: currentZoom
+                        document: document, pageIndex: pageIndex, scale: renderScale
                     )
                     try Task.checkCancellation()
-                    try Task.checkCancellation()
-                    guard generation == documentGeneration else { return }
+                    guard generation == documentGeneration,
+                          revision == renderRevision else { return }
                     pageCache.store(leftImage, forPage: pageIndex, zoom: zoomPercent)
                 }
+
+                try Task.checkCancellation()
+                guard generation == documentGeneration,
+                      revision == renderRevision else { return }
 
                 let renderedRight: PlatformImage?
                 if let ri = rightIndex {
@@ -413,11 +449,11 @@ final class DocumentViewModel {
                         renderedRight = cached
                     } else {
                         let img = try await pageCache.render(
-                            document: document, pageIndex: ri, scale: currentZoom
+                            document: document, pageIndex: ri, scale: renderScale
                         )
                         try Task.checkCancellation()
-                        try Task.checkCancellation()
-                        guard generation == documentGeneration else { return }
+                        guard generation == documentGeneration,
+                              revision == renderRevision else { return }
                         pageCache.store(img, forPage: ri, zoom: zoomPercent)
                         renderedRight = img
                     }
@@ -425,8 +461,10 @@ final class DocumentViewModel {
                     renderedRight = nil
                 }
 
+                try Task.checkCancellation()
                 await MainActor.run {
-                    guard self.documentGeneration == generation else { return }
+                    guard self.documentGeneration == generation,
+                          self.renderRevision == revision else { return }
                     self.pageImage = leftImage
                     self.rightPageImage = renderedRight
                     self.isLoading = false
@@ -435,7 +473,8 @@ final class DocumentViewModel {
                 // Cancelled by new render — ignore
             } catch {
                 await MainActor.run {
-                    guard self.documentGeneration == generation else { return }
+                    guard self.documentGeneration == generation,
+                          self.renderRevision == revision else { return }
                     self.errorMessage = "Decode error: \(error.localizedDescription)"
                     self.isLoading = false
                 }
@@ -479,6 +518,7 @@ struct DocumentActions {
     var adjustZoom: (Double) -> Void
     var zoomToActualSize: () -> Void
     var fitToHeight: () -> Void
+    var fitToWidth: () -> Void
     var presentSearch: () -> Void
     var nextSearchMatch: () -> Void
     var previousSearchMatch: () -> Void

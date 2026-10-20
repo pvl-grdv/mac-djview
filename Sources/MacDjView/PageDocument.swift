@@ -6,11 +6,16 @@ protocol PageDocument: AnyObject, Sendable {
     /// May be nil until an archive page has been decoded.
     func pageSize(at index: Int) -> CGSize?
     func pageDPI(at index: Int) -> Int?
+    /// Continuous comic pages can use uniformly sized, letterboxed slots.
+    var prefersUniformPageSlots: Bool { get }
+    func continuousPageSize(at index: Int) -> CGSize?
     func renderPage(at index: Int, scale: Double) throws -> CGImage
 }
 
 extension PageDocument {
     func pageDPI(at index: Int) -> Int? { nil }
+    var prefersUniformPageSlots: Bool { false }
+    func continuousPageSize(at index: Int) -> CGSize? { pageSize(at: index) }
 }
 
 extension DjVuDocument: PageDocument {

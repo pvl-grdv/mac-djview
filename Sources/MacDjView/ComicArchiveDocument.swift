@@ -59,6 +59,15 @@ final class ComicArchiveDocument: PageDocument, @unchecked Sendable {
 
     var pageCount: Int { entries.count }
 
+    // Comic archives do not expose dimensions without decompressing each image.
+    // Reserve a stable reading slot so pages don't jump as they load.
+    static let readingSlotSize = CGSize(width: 900, height: 1300)
+    var prefersUniformPageSlots: Bool { true }
+
+    func continuousPageSize(at index: Int) -> CGSize? {
+        entries.indices.contains(index) ? Self.readingSlotSize : nil
+    }
+
     init(url: URL) throws {
         let access = FileAccessToken(url)
         let archive = try Unrar.Archive(fileURL: url)

@@ -1,14 +1,29 @@
 import SwiftUI
 
+@MainActor
 @Observable
-class OpenURLHandler {
+final class OpenURLHandler {
     static let shared = OpenURLHandler()
-    var pendingURL: URL?
+
+    // AppDelegate can receive Finder open events before any SwiftUI window exists.
+    // A queue also ensures multiple selected files are not silently discarded.
+    private(set) var pendingURLs: [URL] = []
+
+    func enqueue(_ urls: [URL]) {
+        pendingURLs.append(contentsOf: urls)
+    }
+
+    func takePendingURLs() -> [URL] {
+        let urls = pendingURLs
+        pendingURLs.removeAll()
+        return urls
+    }
 }
 
 #if os(macOS)
 import Cocoa
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Only needed when running via `swift run` without an app bundle
@@ -19,8 +34,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        guard let url = urls.first else { return }
-        OpenURLHandler.shared.pendingURL = url
+        OpenURLHandler.shared.enqueue(urls)
     }
 }
 #endif
