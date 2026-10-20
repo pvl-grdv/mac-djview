@@ -1,6 +1,6 @@
 # MacDjView
 
-MacDjView is a native macOS/iOS DjVu document viewer written in Swift. The app contains a pure-Swift DjVu decoder with no third-party runtime dependencies and uses Apple frameworks for the UI and platform integration.
+MacDjView is a native macOS/iPadOS reader for DjVu documents and CBR comics. DjVu decoding is implemented in pure Swift; CBR support uses the Unrar Swift package. The UI uses Apple's SwiftUI and ImageIO frameworks.
 
 This repository is maintained as an independent downstream product. See [Product direction](docs/product-direction.md) and the [Platform integration roadmap](docs/roadmap.md).
 
@@ -27,7 +27,7 @@ Not implemented yet: Vision OCR fallback, Spotlight content importer, Quick Look
 ## Requirements
 
 - macOS 14 (Sonoma) or later on Apple Silicon (`arm64`).
-- iOS/iPadOS 17 or later.
+- iOS/iPadOS 17 or later, including iPad Pro 10.5-inch (2017).
 - Swift tools 5.10+.
 - CBR handling uses the SwiftPM `Unrar.swift` dependency and its bundled UnRAR decompressor;
   see the dependency's distinct UnRAR license terms. DjVu decoding remains dependency-free.
@@ -51,11 +51,17 @@ swift run MacDjView
 ./scripts/make-app-bundle.sh
 ```
 
-You can also open `Package.swift` in Xcode.
+### macOS
 
-For iOS/iPadOS, open `Package.swift` in Xcode, select an iPhone or iPad destination, and build. CI verifies an arm64 physical-device compile with the iOS/iPadOS 17 deployment target. Installing on a physical device requires Apple development signing/provisioning.
+Use `Package.swift` for SwiftPM testing and the macOS build script above to make the app bundle. The GitHub Actions workflow produces a macOS arm64 archive on successful runs.
 
-Once installed on iPad, tap the folder button in the toolbar and select a `.cbr` book in Files. On macOS use **File → Open…** or drop a CBR into the reader. The current GitHub release workflow only packages the macOS app; it does not publish a signed iPadOS app or TestFlight build.
+### iPadOS (no paid membership or local Xcode required)
+
+**Simplest path:** [download the latest unsigned iPadOS IPA from a successful GitHub Actions run](https://github.com/pvl-grdv/mac-djview/actions/workflows/build-macos-app.yml) (artifact `MacDjView-iPadOS-unsigned-ipa`), unzip the downloaded **outer ZIP**, and use [Sideloadly](https://sideloadly.io/) to sign/install the contained IPA with your free Apple Account. Sideloadly can attempt automatic refresh, subject to Apple's seven-day free provisioning limit.
+
+If you prefer Apple's own tools, open [ios/MacDjView-iOS.xcodeproj](ios/MacDjView-iOS.xcodeproj) in Xcode 27, select `MacDjView-iPad` and run on the iPad using your Personal Team. Both methods support iPad Pro 10.5-inch on iPadOS 17. Full instructions: [Install on an iPad, with or without Xcode](docs/ipad-installation.md).
+
+Once installed, tap the folder button and select a `.cbr` or `.djvu` book from Files. On Mac use **File → Open…** or drop a file into the reader. GitHub publishes an **unsigned** iPadOS IPA artifact for local signing, not an App Store/TestFlight or pre-signed distributable build.
 
 ## macOS releases and Gatekeeper
 
@@ -90,7 +96,9 @@ make unit-test
 
 Tests cover binary bounds checking, decoder safety limits, IFF parsing, wavelet and compositor behavior, embedded DjVu text decoding, Unicode/text-zone handling, and document search.
 
-CI runs on pushes to `main` and pull requests. The macOS job runs unit tests, builds the arm64 app, verifies sandbox entitlements, and packages the release artifact. CI also compiles the iOS/iPadOS target.
+CI runs for pull requests, pushes to `main`, and version tags. The macOS job runs unit tests, builds the arm64 app, validates sandbox entitlements, and packages the release artifact. The iPadOS job builds an actual unsigned `.app` for arm64, verifies its `MinimumOSVersion = 17.0` and DjVu/CBR file type registrations, and uploads an unsigned `.ipa` artifact for local sideloading. PR builds are cancellable when superseded. Only macOS is published in Releases; the CI-provided iPad IPA is locally signed with a free Apple Account and does not require Xcode on the user's Mac.
+
+[Compatibility and WWDC24–26 choices](docs/compatibility.md) explains which APIs we intentionally use and why we keep older OS fallbacks.
 
 ## CLI decode/performance testing
 
@@ -130,6 +138,7 @@ Sources/MacDjView/
     ├── JB2*.swift            # JB2 bitmap/symbol decoding
     └── PageCompositor.swift  # Layer composition to CGImage
 
+ios/MacDjView-iOS.xcodeproj/ # iPadOS app target (Personal Team signing)
 Resources/AppIcon.icon/       # Icon Composer source
 Tests/MacDjViewTests/         # Decoder, safety, text, search, rendering tests
 docs/                         # Architecture, project direction, roadmap, conventions
