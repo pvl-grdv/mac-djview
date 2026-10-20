@@ -396,18 +396,20 @@ struct ContinuousPageSlot: View {
             }
         }
         .frame(width: pageWidth, height: pageHeight)
-        .task(id: TaskKey(pageIndex: pageIndex, zoom: zoom)) {
+        .task(id: TaskKey(pageIndex: pageIndex,
+                          renderScale: PageRenderScale.forZoom(zoom))) {
             await loadImage()
         }
     }
 
     private struct TaskKey: Equatable {
         let pageIndex: Int
-        let zoom: Double
+        let renderScale: Double
     }
 
     private func loadImage() async {
-        let zoomPercent = Int(zoom * 100)
+        let renderScale = PageRenderScale.forZoom(zoom)
+        let zoomPercent = Int(renderScale * 100)
 
         if let cached = pageCache.image(forPage: pageIndex, zoom: zoomPercent) {
             self.image = cached
@@ -419,7 +421,7 @@ struct ContinuousPageSlot: View {
 
         let doc = document
         let idx = pageIndex
-        let scale = zoom
+        let scale = renderScale
 
         do {
             let nsImage = try await pageCache.render(
